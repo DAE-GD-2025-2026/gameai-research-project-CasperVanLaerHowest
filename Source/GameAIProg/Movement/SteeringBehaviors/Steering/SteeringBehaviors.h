@@ -60,6 +60,30 @@ private:
 	float m_radiusNear{ 100.f };
 };
 
+class AvoidanceArrive : public Arrive
+{
+public:
+	AvoidanceArrive() = default;
+	virtual ~AvoidanceArrive() = default;
+
+	void SetAgentsToAvoid(const TArray<ASteeringAgent*>& InAgentsToAvoid) { AgentsToAvoid = InAgentsToAvoid; }
+	void SetAvoidanceRadius(float InRadius) { AvoidanceRadius = FMath::Max(0.f, InRadius); }
+	void SetPredictionTime(float InPredictionTime) { PredictionTime = FMath::Max(0.f, InPredictionTime); }
+	void SetAvoidanceWeight(float InWeight) { AvoidanceWeight = FMath::Max(0.f, InWeight); }
+
+	float GetAvoidanceRadius() const { return AvoidanceRadius; }
+	float GetPredictionTime() const { return PredictionTime; }
+	float GetAvoidanceWeight() const { return AvoidanceWeight; }
+
+	SteeringOutput CalculateSteering(float DeltaT, ASteeringAgent& Agent) override;
+
+private:
+	TArray<ASteeringAgent*> AgentsToAvoid{};
+	float AvoidanceRadius{ 350.f };
+	float PredictionTime{ 0.75f };
+	float AvoidanceWeight{ 1.25f };
+};
+
 class Face : public ISteeringBehavior
 {
 public:

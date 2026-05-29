@@ -70,6 +70,9 @@ private:
 	float FormationSpacing{260.f};
 
 	UPROPERTY(EditAnywhere, Category="SquadCoordination|Setup")
+	float AgentAvoidanceRadius{350.f};
+
+	UPROPERTY(EditAnywhere, Category="SquadCoordination|Setup")
 	float SpawnZ{90.f};
 
 	UPROPERTY(EditAnywhere, Category="SquadCoordination|Debug")
@@ -78,7 +81,7 @@ private:
 	UPROPERTY()
 	TArray<FSquadAgent> SquadAgents{};
 
-	std::vector<std::unique_ptr<Arrive>> ArriveBehaviors{};
+	std::vector<std::unique_ptr<AvoidanceArrive>> ArriveBehaviors{};
 	bool bWasLeftMouseDown{false};
 
 	void SpawnSquad(const FVector& SpawnCenter);

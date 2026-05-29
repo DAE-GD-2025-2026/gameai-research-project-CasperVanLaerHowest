@@ -138,10 +138,11 @@ void ALevel_SquadCoordination::AddAgentToSquad(const FVector& SpawnCenter)
 	Agent->SpawnDefaultController();
 	Agent->SetDebugRenderingEnabled(bDrawDebug);
 
-	// Each agent gets its own Arrive behavior. The level keeps ownership of
+	// Each agent gets its own avoidance-aware arrive behavior. The level keeps ownership of
 	// these behaviors in ArriveBehaviors so the raw pointer given to the
 	// steering agent stays valid for the lifetime of the squad.
-	auto ArriveBehavior = std::make_unique<Arrive>();
+	auto ArriveBehavior = std::make_unique<AvoidanceArrive>();
+	ArriveBehavior->SetAvoidanceRadius(AgentAvoidanceRadius);
 	Agent->SetSteeringBehavior(ArriveBehavior.get());
 
 	FSquadAgent SquadAgent{};
@@ -200,6 +201,16 @@ void ALevel_SquadCoordination::UpdateSquadTargets()
 	// Only update pairs that exist in both arrays. This protects against failed
 	// spawns or any future change that could leave the arrays out of sync.
 	const int32 AgentCount = FMath::Min(SquadAgents.Num(), static_cast<int32>(ArriveBehaviors.size()));
+	TArray<ASteeringAgent*> ActiveAgents{};
+	ActiveAgents.Reserve(AgentCount);
+	for (int32 AgentIndex = 0; AgentIndex < AgentCount; ++AgentIndex)
+	{
+		if (IsValid(SquadAgents[AgentIndex].Agent))
+		{
+			ActiveAgents.Add(SquadAgents[AgentIndex].Agent);
+		}
+	}
+
 	for (int32 AgentIndex = 0; AgentIndex < AgentCount; ++AgentIndex)
 	{
 		FSquadAgent& SquadAgent = SquadAgents[AgentIndex];
@@ -213,6 +224,8 @@ void ALevel_SquadCoordination::UpdateSquadTargets()
 		// squad target, rather than sending every agent to the exact same point.
 		FTargetData FormationTarget{};
 		FormationTarget.Position = MouseTarget.Position + GetFormationOffset(AgentIndex);
+		ArriveBehaviors[AgentIndex]->SetAgentsToAvoid(ActiveAgents);
+		ArriveBehaviors[AgentIndex]->SetAvoidanceRadius(AgentAvoidanceRadius);
 		ArriveBehaviors[AgentIndex]->SetTarget(FormationTarget);
 		SquadAgent.Agent->SetDebugRenderingEnabled(bDrawDebug);
 	}
@@ -309,6 +322,7 @@ void ALevel_SquadCoordination::UpdateImGui()
 		}
 	}
 	ImGui::SliderFloat("Formation spacing", &FormationSpacing, 100.f, 700.f, "%.1f");
+	ImGui::SliderFloat("Avoidance radius", &AgentAvoidanceRadius, 0.f, 900.f, "%.1f");
 
 	const char* FormationLabels[] = {"Wedge", "Column", "Line"};
 	int CurrentFormation = static_cast<int>(SquadFormation);

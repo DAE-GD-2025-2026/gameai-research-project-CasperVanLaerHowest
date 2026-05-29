@@ -51,6 +51,78 @@ SteeringOutput Arrive::CalculateSteering(float DeltaT, ASteeringAgent& Agent)
     return steering;
 }
 
+SteeringOutput AvoidanceArrive::CalculateSteering(float DeltaT, ASteeringAgent& Agent)
+{
+    SteeringOutput steering = Arrive::CalculateSteering(DeltaT, Agent);
+
+    if (AvoidanceRadius <= 0.f || AgentsToAvoid.IsEmpty())
+        return steering;
+
+    const FVector2D agentPosition = Agent.GetPosition();
+    const FVector2D agentVelocity = Agent.GetLinearVelocity();
+    const FVector2D plannedVelocity = steering.LinearVelocity;
+    FVector2D avoidanceVelocity = FVector2D::ZeroVector;
+
+    for (const ASteeringAgent* OtherAgent : AgentsToAvoid)
+    {
+        if (!IsValid(OtherAgent) || OtherAgent == &Agent)
+            continue;
+
+        const FVector2D otherPosition = OtherAgent->GetPosition();
+        const FVector2D toOther = otherPosition - agentPosition;
+        const float currentDistance = toOther.Size();
+        if (currentDistance > AvoidanceRadius)
+            continue;
+
+        const FVector2D relativeVelocity = OtherAgent->GetLinearVelocity() - agentVelocity;
+        float timeToClosest = 0.f;
+        const float relativeSpeedSq = relativeVelocity.SizeSquared();
+        if (relativeSpeedSq > KINDA_SMALL_NUMBER)
+        {
+            timeToClosest = -FVector2D::DotProduct(toOther, relativeVelocity) / relativeSpeedSq;
+            timeToClosest = FMath::Clamp(timeToClosest, 0.f, PredictionTime);
+        }
+
+        const FVector2D predictedOwnPosition = agentPosition + plannedVelocity * timeToClosest;
+        const FVector2D predictedOtherPosition = otherPosition + OtherAgent->GetLinearVelocity() * timeToClosest;
+        const FVector2D awayFromOther = predictedOwnPosition - predictedOtherPosition;
+        const float predictedDistance = awayFromOther.Size();
+
+        if (predictedDistance > AvoidanceRadius)
+            continue;
+
+        FVector2D dodgeDirection = predictedDistance > KINDA_SMALL_NUMBER
+            ? awayFromOther / predictedDistance
+            : agentPosition - otherPosition;
+        if (dodgeDirection.SizeSquared() <= KINDA_SMALL_NUMBER)
+        {
+            dodgeDirection = plannedVelocity.SizeSquared() > KINDA_SMALL_NUMBER
+                ? FVector2D{-plannedVelocity.Y, plannedVelocity.X}.GetSafeNormal()
+                : FVector2D{1.f, 0.f};
+        }
+        else
+        {
+            dodgeDirection.Normalize();
+        }
+        const float distanceFactor = 1.f - FMath::Clamp(predictedDistance / AvoidanceRadius, 0.f, 1.f);
+        avoidanceVelocity += dodgeDirection * distanceFactor;
+    }
+
+    if (avoidanceVelocity.SizeSquared() <= KINDA_SMALL_NUMBER)
+        return steering;
+
+    avoidanceVelocity = avoidanceVelocity.GetSafeNormal() * Agent.GetMaxLinearSpeed() * AvoidanceWeight;
+    steering.LinearVelocity += avoidanceVelocity;
+
+    const float maxSpeed = Agent.GetMaxLinearSpeed();
+    if (steering.LinearVelocity.SizeSquared() > FMath::Square(maxSpeed))
+    {
+        steering.LinearVelocity = steering.LinearVelocity.GetSafeNormal() * maxSpeed;
+    }
+
+    return steering;
+}
+
 SteeringOutput Face::CalculateSteering(float DeltaT, ASteeringAgent& Agent)
 {
     SteeringOutput steering{};
