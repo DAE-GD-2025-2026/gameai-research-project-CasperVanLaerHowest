@@ -66,7 +66,8 @@ public:
 	AvoidanceArrive() = default;
 	virtual ~AvoidanceArrive() = default;
 
-	void SetAgentsToAvoid(const TArray<ASteeringAgent*>& InAgentsToAvoid) { AgentsToAvoid = InAgentsToAvoid; }
+	void ClearAgentsToAvoid() { AgentsToAvoid.Reset(); }
+	void AddAgentToAvoid(ASteeringAgent* AgentToAvoid) { AgentsToAvoid.Add(AgentToAvoid); }
 	void SetAvoidanceRadius(float InRadius) { AvoidanceRadius = FMath::Max(0.f, InRadius); }
 	void SetPredictionTime(float InPredictionTime) { PredictionTime = FMath::Max(0.f, InPredictionTime); }
 	void SetAvoidanceWeight(float InWeight) { AvoidanceWeight = FMath::Max(0.f, InWeight); }

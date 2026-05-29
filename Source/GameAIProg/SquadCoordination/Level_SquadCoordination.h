@@ -82,15 +82,19 @@ private:
 	TArray<FSquadAgent> SquadAgents{};
 
 	std::vector<std::unique_ptr<AvoidanceArrive>> ArriveBehaviors{};
+	ESquadRoles NewAgentRole{ESquadRoles::RearSupport};
 	bool bWasLeftMouseDown{false};
 
 	void SpawnSquad(const FVector& SpawnCenter);
-	void AddAgentToSquad(const FVector& SpawnCenter);
+	void AddAgentToSquad(const FVector& SpawnCenter, ESquadRoles AgentRole);
 	void RemoveAgentFromSquad();
 	void SetSquadTargetFromMouse();
 	void UpdateSquadTargets();
 	void DrawSquadDebug() const;
 	void UpdateImGui();
 	ESquadRoles GetRoleForAgentIndex(int32 AgentIndex) const;
+	int32 GetRoleOccurrenceIndex(int32 AgentIndex) const;
 	FVector2D GetFormationOffset(int32 AgentIndex) const;
+	FVector2D RotateFormationOffset(const FVector2D& LocalOffset) const;
+	FVector2D GetWedgeFormationOffsetForRole(ESquadRoles SquadRole, int32 RoleOccurrenceIndex) const;
 };

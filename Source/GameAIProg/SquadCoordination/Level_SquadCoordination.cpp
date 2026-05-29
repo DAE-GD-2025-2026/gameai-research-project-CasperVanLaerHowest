@@ -105,19 +105,46 @@ void ALevel_SquadCoordination::SpawnSquad(const FVector& SpawnCenter)
 
 	for (int32 AgentIndex = 0; AgentIndex < ClampedSquadSize; ++AgentIndex)
 	{
-		AddAgentToSquad(SpawnCenter);
+		AddAgentToSquad(SpawnCenter, GetRoleForAgentIndex(AgentIndex));
 	}
 
 	SquadSize = SquadAgents.Num();
 }
 
-void ALevel_SquadCoordination::AddAgentToSquad(const FVector& SpawnCenter)
+void ALevel_SquadCoordination::AddAgentToSquad(const FVector& SpawnCenter, ESquadRoles AgentRole)
 {
 	const int32 AgentIndex = SquadAgents.Num();
 
 	// Spawn the agent directly into its current formation slot so newly added
 	// squad members join the layout cleanly instead of appearing on top of the leader.
-	const FVector2D Offset = GetFormationOffset(AgentIndex);
+	int32 RoleOccurrenceIndex = 0;
+	for (const FSquadAgent& SquadAgent : SquadAgents)
+	{
+		if (SquadAgent.Role == AgentRole)
+		{
+			++RoleOccurrenceIndex;
+		}
+	}
+	FVector2D Offset = FVector2D::ZeroVector;
+	switch (SquadFormation)
+	{
+	case ESquadFormation::Wedge:
+		Offset = GetWedgeFormationOffsetForRole(AgentRole, RoleOccurrenceIndex);
+		break;
+	case ESquadFormation::Column:
+		Offset = RotateFormationOffset(FVector2D{-FormationSpacing * static_cast<float>(AgentIndex), 0.f});
+		break;
+	case ESquadFormation::Line:
+	{
+		const int32 NewAgentCount = AgentIndex + 1;
+		const float CenteredIndex = static_cast<float>(AgentIndex) - (static_cast<float>(NewAgentCount - 1) * 0.5f);
+		Offset = RotateFormationOffset(FVector2D{0.f, FormationSpacing * CenteredIndex});
+		break;
+	}
+	default:
+		Offset = FVector2D::ZeroVector;
+		break;
+	}
 	const FVector SpawnLocation{
 		SpawnCenter.X + Offset.X,
 		SpawnCenter.Y + Offset.Y,
@@ -147,7 +174,7 @@ void ALevel_SquadCoordination::AddAgentToSquad(const FVector& SpawnCenter)
 
 	FSquadAgent SquadAgent{};
 	SquadAgent.Agent = Agent;
-	SquadAgent.Role = GetRoleForAgentIndex(AgentIndex);
+	SquadAgent.Role = AgentRole;
 	SquadAgents.Add(SquadAgent);
 	ArriveBehaviors.emplace_back(std::move(ArriveBehavior));
 	SquadSize = SquadAgents.Num();
@@ -224,7 +251,11 @@ void ALevel_SquadCoordination::UpdateSquadTargets()
 		// squad target, rather than sending every agent to the exact same point.
 		FTargetData FormationTarget{};
 		FormationTarget.Position = MouseTarget.Position + GetFormationOffset(AgentIndex);
-		ArriveBehaviors[AgentIndex]->SetAgentsToAvoid(ActiveAgents);
+		ArriveBehaviors[AgentIndex]->ClearAgentsToAvoid();
+		for (ASteeringAgent* ActiveAgent : ActiveAgents)
+		{
+			ArriveBehaviors[AgentIndex]->AddAgentToAvoid(ActiveAgent);
+		}
 		ArriveBehaviors[AgentIndex]->SetAvoidanceRadius(AgentAvoidanceRadius);
 		ArriveBehaviors[AgentIndex]->SetTarget(FormationTarget);
 		SquadAgent.Agent->SetDebugRenderingEnabled(bDrawDebug);
@@ -285,6 +316,12 @@ void ALevel_SquadCoordination::UpdateImGui()
 	ImGui::Text("Squad Coordination");
 	ImGui::Indent();
 	ImGui::Text("Agents: %d", SquadAgents.Num());
+	const char* RoleLabels[] = {"Leader", "Left Flank", "Right Flank", "Rear Support"};
+	int NewAgentRoleIndex = static_cast<int>(NewAgentRole);
+	if (ImGui::Combo("New agent role", &NewAgentRoleIndex, RoleLabels, IM_ARRAYSIZE(RoleLabels)))
+	{
+		NewAgentRole = static_cast<ESquadRoles>(NewAgentRoleIndex);
+	}
 	if (ImGui::Button("Add agent"))
 	{
 		const FVector SpawnCenter{
@@ -292,7 +329,7 @@ void ALevel_SquadCoordination::UpdateImGui()
 			MouseTarget.Position.Y,
 			SpawnZ
 		};
-		AddAgentToSquad(SpawnCenter);
+		AddAgentToSquad(SpawnCenter, NewAgentRole);
 	}
 	ImGui::SameLine();
 	const bool bCanRemoveAgent = SquadAgents.Num() > 1;
@@ -330,6 +367,20 @@ void ALevel_SquadCoordination::UpdateImGui()
 	{
 		SquadFormation = static_cast<ESquadFormation>(CurrentFormation);
 	}
+
+	for (int32 AgentIndex = 0; AgentIndex < SquadAgents.Num(); ++AgentIndex)
+	{
+		FSquadAgent& SquadAgent = SquadAgents[AgentIndex];
+		ImGui::PushID(AgentIndex);
+		int CurrentRole = static_cast<int>(SquadAgent.Role);
+		if (ImGui::Combo("Role", &CurrentRole, RoleLabels, IM_ARRAYSIZE(RoleLabels)))
+		{
+			SquadAgent.Role = static_cast<ESquadRoles>(CurrentRole);
+		}
+		ImGui::SameLine();
+		ImGui::Text("Agent %d", AgentIndex + 1);
+		ImGui::PopID();
+	}
 	ImGui::Unindent();
 
 	ImGui::End();
@@ -350,10 +401,55 @@ ESquadRoles ALevel_SquadCoordination::GetRoleForAgentIndex(int32 AgentIndex) con
 	}
 }
 
+int32 ALevel_SquadCoordination::GetRoleOccurrenceIndex(int32 AgentIndex) const
+{
+	if (!SquadAgents.IsValidIndex(AgentIndex))
+	{
+		return 0;
+	}
+
+	const ESquadRoles SquadRole = SquadAgents[AgentIndex].Role;
+	int32 OccurrenceIndex = 0;
+	for (int32 OtherAgentIndex = 0; OtherAgentIndex < AgentIndex; ++OtherAgentIndex)
+	{
+		if (SquadAgents[OtherAgentIndex].Role == SquadRole)
+		{
+			++OccurrenceIndex;
+		}
+	}
+
+	return OccurrenceIndex;
+}
+
 FVector2D ALevel_SquadCoordination::GetFormationOffset(int32 AgentIndex) const
 {
-	float FormationYawRadians = 0.f;
+	if (!SquadAgents.IsValidIndex(AgentIndex))
+	{
+		return FVector2D::ZeroVector;
+	}
 
+	switch (SquadFormation)
+	{
+	case ESquadFormation::Wedge:
+		return GetWedgeFormationOffsetForRole(SquadAgents[AgentIndex].Role, GetRoleOccurrenceIndex(AgentIndex));
+
+	case ESquadFormation::Column:
+		return RotateFormationOffset(FVector2D{-FormationSpacing * static_cast<float>(AgentIndex), 0.f});
+
+	case ESquadFormation::Line:
+	{
+		const float CenteredIndex = static_cast<float>(AgentIndex) - (static_cast<float>(SquadAgents.Num() - 1) * 0.5f);
+		return RotateFormationOffset(FVector2D{0.f, FormationSpacing * CenteredIndex});
+	}
+
+	default:
+		return FVector2D::ZeroVector;
+	}
+}
+
+FVector2D ALevel_SquadCoordination::RotateFormationOffset(const FVector2D& LocalOffset) const
+{
+	float FormationYawRadians = 0.f;
 	if (!SquadAgents.IsEmpty() && IsValid(SquadAgents[0].Agent))
 	{
 		FormationYawRadians = FMath::DegreesToRadians(SquadAgents[0].Agent->GetActorRotation().Yaw);
@@ -361,48 +457,40 @@ FVector2D ALevel_SquadCoordination::GetFormationOffset(int32 AgentIndex) const
 
 	const float CosYaw = FMath::Cos(FormationYawRadians);
 	const float SinYaw = FMath::Sin(FormationYawRadians);
-	const auto RotateOffset = [CosYaw, SinYaw](const FVector2D& LocalOffset)
-	{
-		return FVector2D{
-			LocalOffset.X * CosYaw - LocalOffset.Y * SinYaw,
-			LocalOffset.X * SinYaw + LocalOffset.Y * CosYaw
-		};
+	return FVector2D{
+		LocalOffset.X * CosYaw - LocalOffset.Y * SinYaw,
+		LocalOffset.X * SinYaw + LocalOffset.Y * CosYaw
 	};
+}
 
-	switch (SquadFormation)
+FVector2D ALevel_SquadCoordination::GetWedgeFormationOffsetForRole(ESquadRoles SquadRole, int32 RoleOccurrenceIndex) const
+{
+	FVector2D LocalOffset = FVector2D::ZeroVector;
+	const float RoleRankOffset = static_cast<float>(RoleOccurrenceIndex);
+
+	switch (SquadRole)
 	{
-	case ESquadFormation::Wedge:
-		if (AgentIndex == 0)
-		{
-			return FVector2D::ZeroVector;
-		}
-		{
-			const int32 Rank = (AgentIndex + 1) / 2;
-			const float Side = AgentIndex % 2 == 1 ? -1.f : 1.f;
-			return RotateOffset(FVector2D{
-				-FormationSpacing * static_cast<float>(Rank),
-				FormationSpacing * Side * static_cast<float>(Rank)
-			});
-		}
-
-	case ESquadFormation::Column:
-		return RotateOffset(FVector2D{-FormationSpacing * static_cast<float>(AgentIndex), 0.f});
-
-	case ESquadFormation::Line:
-		if (AgentIndex == 0)
-		{
-			return FVector2D::ZeroVector;
-		}
-		{
-			const int32 SlotDistanceFromLeader = (AgentIndex + 1) / 2;
-			const float Side = AgentIndex % 2 == 1 ? -1.f : 1.f;
-			return RotateOffset(FVector2D{
-				0.f,
-				FormationSpacing * Side * static_cast<float>(SlotDistanceFromLeader)
-			});
-		}
-
+	case ESquadRoles::Leader:
+		LocalOffset = FVector2D{-FormationSpacing * RoleRankOffset, 0.f};
+		break;
+	case ESquadRoles::LeftFlank:
+		LocalOffset = FVector2D{
+			-FormationSpacing * (RoleRankOffset + 1.f),
+			-FormationSpacing * (RoleRankOffset + 1.f)
+		};
+		break;
+	case ESquadRoles::RightFlank:
+		LocalOffset = FVector2D{
+			-FormationSpacing * (RoleRankOffset + 1.f),
+			FormationSpacing * (RoleRankOffset + 1.f)
+		};
+		break;
+	case ESquadRoles::RearSupport:
+		LocalOffset = FVector2D{-FormationSpacing * (RoleRankOffset + 2.f), 0.f};
+		break;
 	default:
 		return FVector2D::ZeroVector;
 	}
+
+	return RotateFormationOffset(LocalOffset);
 }
