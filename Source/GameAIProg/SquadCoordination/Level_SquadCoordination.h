@@ -82,6 +82,8 @@ private:
 	bool bWasLeftMouseDown{false};
 
 	void SpawnSquad(const FVector& SpawnCenter);
+	void AddAgentToSquad(const FVector& SpawnCenter);
+	void RemoveAgentFromSquad();
 	void SetSquadTargetFromMouse();
 	void UpdateSquadTargets();
 	void DrawSquadDebug() const;

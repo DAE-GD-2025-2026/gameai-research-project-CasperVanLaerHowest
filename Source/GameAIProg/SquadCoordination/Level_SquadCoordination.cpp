@@ -105,41 +105,79 @@ void ALevel_SquadCoordination::SpawnSquad(const FVector& SpawnCenter)
 
 	for (int32 AgentIndex = 0; AgentIndex < ClampedSquadSize; ++AgentIndex)
 	{
-		// Spawn each agent directly into its formation slot around the center so
-		// the squad begins already arranged instead of stacked on one point.
-		const FVector2D Offset = GetFormationOffset(AgentIndex);
-		const FVector SpawnLocation{
-			SpawnCenter.X + Offset.X,
-			SpawnCenter.Y + Offset.Y,
-			SpawnZ
-		};
-
-		ASteeringAgent* Agent = GetWorld()->SpawnActor<ASteeringAgent>(
-			SteeringAgentClass,
-			SpawnLocation,
-			FRotator::ZeroRotator);
-
-		if (!IsValid(Agent))
-		{
-			UE_LOG(LogTemp, Error, TEXT("SquadCoordination: Failed to spawn squad agent %d."), AgentIndex);
-			continue;
-		}
-
-		Agent->SpawnDefaultController();
-		Agent->SetDebugRenderingEnabled(bDrawDebug);
-
-		// Each agent gets its own Arrive behavior. The level keeps ownership of
-		// these behaviors in ArriveBehaviors so the raw pointer given to the
-		// steering agent stays valid for the lifetime of the squad.
-		auto ArriveBehavior = std::make_unique<Arrive>();
-		Agent->SetSteeringBehavior(ArriveBehavior.get());
-
-		FSquadAgent SquadAgent{};
-		SquadAgent.Agent = Agent;
-		SquadAgent.Role = GetRoleForAgentIndex(AgentIndex);
-		SquadAgents.Add(SquadAgent);
-		ArriveBehaviors.emplace_back(std::move(ArriveBehavior));
+		AddAgentToSquad(SpawnCenter);
 	}
+
+	SquadSize = SquadAgents.Num();
+}
+
+void ALevel_SquadCoordination::AddAgentToSquad(const FVector& SpawnCenter)
+{
+	const int32 AgentIndex = SquadAgents.Num();
+
+	// Spawn the agent directly into its current formation slot so newly added
+	// squad members join the layout cleanly instead of appearing on top of the leader.
+	const FVector2D Offset = GetFormationOffset(AgentIndex);
+	const FVector SpawnLocation{
+		SpawnCenter.X + Offset.X,
+		SpawnCenter.Y + Offset.Y,
+		SpawnZ
+	};
+
+	ASteeringAgent* Agent = GetWorld()->SpawnActor<ASteeringAgent>(
+		SteeringAgentClass,
+		SpawnLocation,
+		FRotator::ZeroRotator);
+
+	if (!IsValid(Agent))
+	{
+		UE_LOG(LogTemp, Error, TEXT("SquadCoordination: Failed to spawn squad agent %d."), AgentIndex);
+		return;
+	}
+
+	Agent->SpawnDefaultController();
+	Agent->SetDebugRenderingEnabled(bDrawDebug);
+
+	// Each agent gets its own Arrive behavior. The level keeps ownership of
+	// these behaviors in ArriveBehaviors so the raw pointer given to the
+	// steering agent stays valid for the lifetime of the squad.
+	auto ArriveBehavior = std::make_unique<Arrive>();
+	Agent->SetSteeringBehavior(ArriveBehavior.get());
+
+	FSquadAgent SquadAgent{};
+	SquadAgent.Agent = Agent;
+	SquadAgent.Role = GetRoleForAgentIndex(AgentIndex);
+	SquadAgents.Add(SquadAgent);
+	ArriveBehaviors.emplace_back(std::move(ArriveBehavior));
+	SquadSize = SquadAgents.Num();
+
+	UpdateSquadTargets();
+}
+
+void ALevel_SquadCoordination::RemoveAgentFromSquad()
+{
+	// Keep at least the leader alive so the formation still has a stable anchor.
+	if (SquadAgents.Num() <= 1)
+	{
+		return;
+	}
+
+	const int32 AgentIndex = SquadAgents.Num() - 1;
+	ASteeringAgent* Agent = SquadAgents[AgentIndex].Agent;
+	if (IsValid(Agent))
+	{
+		Agent->SetSteeringBehavior(nullptr);
+		Agent->Destroy();
+	}
+
+	SquadAgents.RemoveAt(AgentIndex);
+	if (ArriveBehaviors.size() > static_cast<size_t>(AgentIndex))
+	{
+		ArriveBehaviors.erase(ArriveBehaviors.begin() + AgentIndex);
+	}
+
+	SquadSize = SquadAgents.Num();
+	UpdateSquadTargets();
 }
 
 void ALevel_SquadCoordination::SetSquadTargetFromMouse()
@@ -234,6 +272,29 @@ void ALevel_SquadCoordination::UpdateImGui()
 	ImGui::Text("Squad Coordination");
 	ImGui::Indent();
 	ImGui::Text("Agents: %d", SquadAgents.Num());
+	if (ImGui::Button("Add agent"))
+	{
+		const FVector SpawnCenter{
+			MouseTarget.Position.X,
+			MouseTarget.Position.Y,
+			SpawnZ
+		};
+		AddAgentToSquad(SpawnCenter);
+	}
+	ImGui::SameLine();
+	const bool bCanRemoveAgent = SquadAgents.Num() > 1;
+	if (!bCanRemoveAgent)
+	{
+		ImGui::BeginDisabled();
+	}
+	if (ImGui::Button("Remove agent"))
+	{
+		RemoveAgentFromSquad();
+	}
+	if (!bCanRemoveAgent)
+	{
+		ImGui::EndDisabled();
+	}
 	ImGui::Text("Target: (%.1f, %.1f)", MouseTarget.Position.X, MouseTarget.Position.Y);
 	if (ImGui::Checkbox("Debug Rendering", &bDrawDebug))
 	{
@@ -277,7 +338,6 @@ ESquadRoles ALevel_SquadCoordination::GetRoleForAgentIndex(int32 AgentIndex) con
 
 FVector2D ALevel_SquadCoordination::GetFormationOffset(int32 AgentIndex) const
 {
-	const ESquadRoles SquadRole = GetRoleForAgentIndex(AgentIndex);
 	float FormationYawRadians = 0.f;
 
 	if (!SquadAgents.IsEmpty() && IsValid(SquadAgents[0].Agent))
@@ -298,36 +358,34 @@ FVector2D ALevel_SquadCoordination::GetFormationOffset(int32 AgentIndex) const
 	switch (SquadFormation)
 	{
 	case ESquadFormation::Wedge:
-		switch (SquadRole)
+		if (AgentIndex == 0)
 		{
-		case ESquadRoles::Leader:
 			return FVector2D::ZeroVector;
-		case ESquadRoles::LeftFlank:
-			return RotateOffset(FVector2D{-FormationSpacing, -FormationSpacing});
-		case ESquadRoles::RightFlank:
-			return RotateOffset(FVector2D{-FormationSpacing, FormationSpacing});
-		case ESquadRoles::RearSupport:
-			return RotateOffset(FVector2D{-FormationSpacing * 2.f, 0.f});
-		default:
-			return FVector2D::ZeroVector;
+		}
+		{
+			const int32 Rank = (AgentIndex + 1) / 2;
+			const float Side = AgentIndex % 2 == 1 ? -1.f : 1.f;
+			return RotateOffset(FVector2D{
+				-FormationSpacing * static_cast<float>(Rank),
+				FormationSpacing * Side * static_cast<float>(Rank)
+			});
 		}
 
 	case ESquadFormation::Column:
 		return RotateOffset(FVector2D{-FormationSpacing * static_cast<float>(AgentIndex), 0.f});
 
 	case ESquadFormation::Line:
-		switch (SquadRole)
+		if (AgentIndex == 0)
 		{
-		case ESquadRoles::Leader:
 			return FVector2D::ZeroVector;
-		case ESquadRoles::LeftFlank:
-			return RotateOffset(FVector2D{0.f, -FormationSpacing});
-		case ESquadRoles::RightFlank:
-			return RotateOffset(FVector2D{0.f, FormationSpacing});
-		case ESquadRoles::RearSupport:
-			return RotateOffset(FVector2D{0.f, -FormationSpacing * 2.f});
-		default:
-			return FVector2D::ZeroVector;
+		}
+		{
+			const int32 SlotDistanceFromLeader = (AgentIndex + 1) / 2;
+			const float Side = AgentIndex % 2 == 1 ? -1.f : 1.f;
+			return RotateOffset(FVector2D{
+				0.f,
+				FormationSpacing * Side * static_cast<float>(SlotDistanceFromLeader)
+			});
 		}
 
 	default:
