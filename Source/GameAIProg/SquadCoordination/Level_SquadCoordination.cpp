@@ -8,6 +8,8 @@
 
 ALevel_SquadCoordination::ALevel_SquadCoordination()
 {
+	// Let Unreal call Tick every frame so the level can react to mouse input,
+	// update squad destinations, draw debug helpers, and refresh the ImGui panel.
 	PrimaryActorTick.bCanEverTick = true;
 }
 
@@ -15,12 +17,16 @@ void ALevel_SquadCoordination::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// Keep the playable area focused around this level so agents do not wander
+	// too far outside the navmesh/world area during the demo.
 	if (TrimWorld)
 	{
 		TrimWorld->SetTrimWorldSize(3200.f);
 		TrimWorld->bShouldTrimWorld = true;
 	}
 
+	// Start the squad near the center of the navmesh when possible. If the
+	// navmesh center cannot be found, fall back to world origin at SpawnZ.
 	const FVector SpawnCenter = GetNavMeshBoundsCenter(SpawnZ).value_or(FVector{0.f, 0.f, SpawnZ});
 	MouseTarget.Position = FVector2D{SpawnCenter};
 	SpawnSquad(SpawnCenter);
@@ -31,9 +37,13 @@ void ALevel_SquadCoordination::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
 
+	// The Enhanced Input binding handles normal clicks, but this direct mouse
+	// check acts as a fallback when the input action or component is missing.
 	if (PlayerController)
 	{
 		const bool bLeftMouseDown = PlayerController->IsInputKeyDown(EKeys::LeftMouseButton);
+		// Only respond on the first frame of a click, and ignore clicks that
+		// ImGui wants to use for sliders, checkboxes, or other UI controls.
 		if (bLeftMouseDown && !bWasLeftMouseDown && !ImGui::GetIO().WantCaptureMouse)
 		{
 			SetSquadTargetFromMouse();
@@ -41,6 +51,8 @@ void ALevel_SquadCoordination::Tick(float DeltaTime)
 		bWasLeftMouseDown = bLeftMouseDown;
 	}
 
+	// Recalculate targets every frame so formation spacing/debug changes in the
+	// UI immediately affect the squad without needing another click.
 	UpdateSquadTargets();
 
 	if (bDrawDebug)
@@ -55,12 +67,16 @@ void ALevel_SquadCoordination::BindLevelInputActions()
 {
 	Super::BindLevelInputActions();
 
+	// If Enhanced Input is not available, Tick still checks left mouse directly
+	// so the level remains usable.
 	if (!PlayerEnhancedInputComponent)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("SquadCoordination: Enhanced input component missing, using direct LMB fallback."));
 		return;
 	}
 
+	// Bind the assigned input action to the same function used by the fallback
+	// mouse code, keeping both input paths in sync.
 	if (SetSquadTargetAction)
 	{
 		PlayerEnhancedInputComponent->BindAction(
@@ -77,15 +93,20 @@ void ALevel_SquadCoordination::BindLevelInputActions()
 
 void ALevel_SquadCoordination::SpawnSquad(const FVector& SpawnCenter)
 {
+	// Clear any previous squad data before spawning a fresh set of agents.
 	SquadAgents.Reset();
 	ArriveBehaviors.clear();
 
+	// Make sure there is always at least one agent, even if the editable value
+	// in the details panel is accidentally set to zero or below.
 	const int32 ClampedSquadSize = FMath::Max(1, SquadSize);
 	SquadAgents.Reserve(ClampedSquadSize);
 	ArriveBehaviors.reserve(ClampedSquadSize);
 
 	for (int32 AgentIndex = 0; AgentIndex < ClampedSquadSize; ++AgentIndex)
 	{
+		// Spawn each agent directly into its formation slot around the center so
+		// the squad begins already arranged instead of stacked on one point.
 		const FVector2D Offset = GetFormationOffset(AgentIndex);
 		const FVector SpawnLocation{
 			SpawnCenter.X + Offset.X,
@@ -107,56 +128,75 @@ void ALevel_SquadCoordination::SpawnSquad(const FVector& SpawnCenter)
 		Agent->SpawnDefaultController();
 		Agent->SetDebugRenderingEnabled(bDrawDebug);
 
+		// Each agent gets its own Arrive behavior. The level keeps ownership of
+		// these behaviors in ArriveBehaviors so the raw pointer given to the
+		// steering agent stays valid for the lifetime of the squad.
 		auto ArriveBehavior = std::make_unique<Arrive>();
 		Agent->SetSteeringBehavior(ArriveBehavior.get());
 
-		SquadAgents.Add(Agent);
+		FSquadAgent SquadAgent{};
+		SquadAgent.Agent = Agent;
+		SquadAgent.Role = GetRoleForAgentIndex(AgentIndex);
+		SquadAgents.Add(SquadAgent);
 		ArriveBehaviors.emplace_back(std::move(ArriveBehavior));
 	}
 }
 
 void ALevel_SquadCoordination::SetSquadTargetFromMouse()
 {
+	// Store the latest valid mouse world position. If the current frame cannot
+	// produce one, the squad keeps using the last known position instead.
 	if (const auto MouseWorldPos = GetMouseWorldPos(); MouseWorldPos.has_value())
 	{
 		LatestMouseWorldPos = MouseWorldPos.value();
 	}
 
+	// MouseTarget is the squad's center point; individual agents offset from it
+	// to form the surrounding pattern.
 	MouseTarget.Position = FVector2D{LatestMouseWorldPos};
 	UpdateSquadTargets();
 }
 
 void ALevel_SquadCoordination::UpdateSquadTargets()
 {
+	// Only update pairs that exist in both arrays. This protects against failed
+	// spawns or any future change that could leave the arrays out of sync.
 	const int32 AgentCount = FMath::Min(SquadAgents.Num(), static_cast<int32>(ArriveBehaviors.size()));
 	for (int32 AgentIndex = 0; AgentIndex < AgentCount; ++AgentIndex)
 	{
-		if (!IsValid(SquadAgents[AgentIndex]) || !ArriveBehaviors[AgentIndex])
+		FSquadAgent& SquadAgent = SquadAgents[AgentIndex];
+
+		if (!IsValid(SquadAgent.Agent) || !ArriveBehaviors[AgentIndex])
 		{
 			continue;
 		}
 
+		// Move each agent toward its own formation slot relative to the current
+		// squad target, rather than sending every agent to the exact same point.
 		FTargetData FormationTarget{};
 		FormationTarget.Position = MouseTarget.Position + GetFormationOffset(AgentIndex);
 		ArriveBehaviors[AgentIndex]->SetTarget(FormationTarget);
-		SquadAgents[AgentIndex]->SetDebugRenderingEnabled(bDrawDebug);
+		SquadAgent.Agent->SetDebugRenderingEnabled(bDrawDebug);
 	}
 }
 
 void ALevel_SquadCoordination::DrawSquadDebug() const
 {
+	// Draw the shared squad target slightly above the ground so it is visible.
 	const float DrawZ = SpawnZ + 15.f;
 	const FVector SquadTarget{MouseTarget.Position.X, MouseTarget.Position.Y, DrawZ};
 	DrawDebugSphere(GetWorld(), SquadTarget, 70.f, 16, FColor::Cyan, false, -1.f, 0, 3.f);
 
 	for (int32 AgentIndex = 0; AgentIndex < SquadAgents.Num(); ++AgentIndex)
 	{
-		const ASteeringAgent* Agent = SquadAgents[AgentIndex];
+		const ASteeringAgent* Agent = SquadAgents[AgentIndex].Agent;
 		if (!IsValid(Agent))
 		{
 			continue;
 		}
 
+		// Green points show the exact slot each agent is trying to reach, and
+		// green lines make it easy to see which agent is assigned to each slot.
 		const FVector2D Slot2D = MouseTarget.Position + GetFormationOffset(AgentIndex);
 		const FVector SlotLocation{Slot2D.X, Slot2D.Y, DrawZ};
 		DrawDebugPoint(GetWorld(), SlotLocation, 14.f, FColor::Green, false, -1.f, 0);
@@ -166,6 +206,8 @@ void ALevel_SquadCoordination::DrawSquadDebug() const
 
 void ALevel_SquadCoordination::UpdateImGui()
 {
+	// Build a small fixed ImGui panel for controls, performance stats, and live
+	// tuning values used by this level.
 	ImGui::SetNextWindowPos(WindowPos);
 	ImGui::SetNextWindowSize(WindowSize);
 	ImGui::Begin("Gameplay Programming", nullptr, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse);
@@ -195,34 +237,100 @@ void ALevel_SquadCoordination::UpdateImGui()
 	ImGui::Text("Target: (%.1f, %.1f)", MouseTarget.Position.X, MouseTarget.Position.Y);
 	if (ImGui::Checkbox("Debug Rendering", &bDrawDebug))
 	{
-		for (ASteeringAgent* Agent : SquadAgents)
+		// Apply the debug toggle immediately to existing agents instead of
+		// waiting for the next spawn.
+		for (FSquadAgent& SquadAgent : SquadAgents)
 		{
-			if (IsValid(Agent))
+			if (IsValid(SquadAgent.Agent))
 			{
-				Agent->SetDebugRenderingEnabled(bDrawDebug);
+				SquadAgent.Agent->SetDebugRenderingEnabled(bDrawDebug);
 			}
 		}
 	}
 	ImGui::SliderFloat("Formation spacing", &FormationSpacing, 100.f, 700.f, "%.1f");
+
+	const char* FormationLabels[] = {"Wedge", "Column", "Line"};
+	int CurrentFormation = static_cast<int>(SquadFormation);
+	if (ImGui::Combo("Formation", &CurrentFormation, FormationLabels, IM_ARRAYSIZE(FormationLabels)))
+	{
+		SquadFormation = static_cast<ESquadFormation>(CurrentFormation);
+	}
 	ImGui::Unindent();
 
 	ImGui::End();
 }
 
+ESquadRoles ALevel_SquadCoordination::GetRoleForAgentIndex(int32 AgentIndex) const
+{
+	switch (AgentIndex)
+	{
+	case 0:
+		return ESquadRoles::Leader;
+	case 1:
+		return ESquadRoles::LeftFlank;
+	case 2:
+		return ESquadRoles::RightFlank;
+	default:
+		return ESquadRoles::RearSupport;
+	}
+}
+
 FVector2D ALevel_SquadCoordination::GetFormationOffset(int32 AgentIndex) const
 {
-	if (AgentIndex == 0)
+	const ESquadRoles SquadRole = GetRoleForAgentIndex(AgentIndex);
+	float FormationYawRadians = 0.f;
+
+	if (!SquadAgents.IsEmpty() && IsValid(SquadAgents[0].Agent))
 	{
-		return FVector2D::ZeroVector;
+		FormationYawRadians = FMath::DegreesToRadians(SquadAgents[0].Agent->GetActorRotation().Yaw);
 	}
 
-	const int32 RingIndex = (AgentIndex - 1) / 6 + 1;
-	const int32 IndexInRing = (AgentIndex - 1) % 6;
-	const float Angle = static_cast<float>(IndexInRing) * UE_TWO_PI / 6.f;
-	const float Radius = FormationSpacing * static_cast<float>(RingIndex);
-
-	return FVector2D{
-		FMath::Cos(Angle) * Radius,
-		FMath::Sin(Angle) * Radius
+	const float CosYaw = FMath::Cos(FormationYawRadians);
+	const float SinYaw = FMath::Sin(FormationYawRadians);
+	const auto RotateOffset = [CosYaw, SinYaw](const FVector2D& LocalOffset)
+	{
+		return FVector2D{
+			LocalOffset.X * CosYaw - LocalOffset.Y * SinYaw,
+			LocalOffset.X * SinYaw + LocalOffset.Y * CosYaw
+		};
 	};
+
+	switch (SquadFormation)
+	{
+	case ESquadFormation::Wedge:
+		switch (SquadRole)
+		{
+		case ESquadRoles::Leader:
+			return FVector2D::ZeroVector;
+		case ESquadRoles::LeftFlank:
+			return RotateOffset(FVector2D{-FormationSpacing, -FormationSpacing});
+		case ESquadRoles::RightFlank:
+			return RotateOffset(FVector2D{-FormationSpacing, FormationSpacing});
+		case ESquadRoles::RearSupport:
+			return RotateOffset(FVector2D{-FormationSpacing * 2.f, 0.f});
+		default:
+			return FVector2D::ZeroVector;
+		}
+
+	case ESquadFormation::Column:
+		return RotateOffset(FVector2D{-FormationSpacing * static_cast<float>(AgentIndex), 0.f});
+
+	case ESquadFormation::Line:
+		switch (SquadRole)
+		{
+		case ESquadRoles::Leader:
+			return FVector2D::ZeroVector;
+		case ESquadRoles::LeftFlank:
+			return RotateOffset(FVector2D{0.f, -FormationSpacing});
+		case ESquadRoles::RightFlank:
+			return RotateOffset(FVector2D{0.f, FormationSpacing});
+		case ESquadRoles::RearSupport:
+			return RotateOffset(FVector2D{0.f, -FormationSpacing * 2.f});
+		default:
+			return FVector2D::ZeroVector;
+		}
+
+	default:
+		return FVector2D::ZeroVector;
+	}
 }

@@ -801,3 +801,10 @@ FodyWeavers.xsd
 # Ignoring diversion related files
 .dvignore
 /.diversion
+.buildprofile/AppData/Local/UnrealEngine/Intermediate/Build/UnrealBuildTool.Env.BuildConfiguration.xml
+.buildprofile/AppData/Local/UnrealBuildTool/Log.txt
+.buildprofile/AppData/Local/UnrealBuildTool/Log.json
+.buildprofile/AppData/Local/UnrealBuildTool/Log-backup-2026.05.27-11.17.10.txt
+.buildprofile/AppData/Local/UnrealBuildTool/Log-backup-2026.05.27-11.17.09.txt
+.buildprofile/AppData/Local/UnrealBuildTool/Log-backup-2026.05.27-11.17.08.txt
+*.txt

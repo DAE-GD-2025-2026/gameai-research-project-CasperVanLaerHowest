@@ -11,6 +11,37 @@
 #include "Shared/Level_Base.h"
 #include "Level_SquadCoordination.generated.h"
 
+class ASteeringAgent;
+
+UENUM(BlueprintType)
+enum class ESquadRoles : uint8
+{
+	Leader = 0,
+	LeftFlank = 1,
+	RightFlank = 2,
+	RearSupport = 3
+};
+
+UENUM(BlueprintType)
+enum class ESquadFormation : uint8
+{
+	Wedge,
+	Column,
+	Line
+};
+
+USTRUCT(BlueprintType)
+struct FSquadAgent
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Squad")
+	ASteeringAgent* Agent{};
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Squad")
+	ESquadRoles Role{ESquadRoles::Leader};
+};
+
 UCLASS()
 class GAMEAIPROG_API ALevel_SquadCoordination : public ALevel_Base
 {
@@ -33,6 +64,9 @@ private:
 	int32 SquadSize{4};
 
 	UPROPERTY(EditAnywhere, Category="SquadCoordination|Setup")
+	ESquadFormation SquadFormation{ESquadFormation::Wedge};
+
+	UPROPERTY(EditAnywhere, Category="SquadCoordination|Setup")
 	float FormationSpacing{260.f};
 
 	UPROPERTY(EditAnywhere, Category="SquadCoordination|Setup")
@@ -42,7 +76,7 @@ private:
 	bool bDrawDebug{true};
 
 	UPROPERTY()
-	TArray<ASteeringAgent*> SquadAgents{};
+	TArray<FSquadAgent> SquadAgents{};
 
 	std::vector<std::unique_ptr<Arrive>> ArriveBehaviors{};
 	bool bWasLeftMouseDown{false};
@@ -52,5 +86,6 @@ private:
 	void UpdateSquadTargets();
 	void DrawSquadDebug() const;
 	void UpdateImGui();
+	ESquadRoles GetRoleForAgentIndex(int32 AgentIndex) const;
 	FVector2D GetFormationOffset(int32 AgentIndex) const;
 };

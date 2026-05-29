@@ -39,7 +39,7 @@ public:
 	
 protected:
 	// Common UI Vars
-	float const MenuWidth{235};
+	float const MenuWidth{400};
 	FVector2D ViewportSize{};
 	ImVec2 WindowSize{};
 	ImVec2 WindowPos{};
