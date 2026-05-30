@@ -2,9 +2,8 @@
 
 #include "Level_SquadCoordination.h"
 
+#include "AIController.h"
 #include "NavigationSystem.h"
-#include "NavigationPath.h"
-#include "NavMesh/RecastNavMesh.h"
 #include "DrawDebugHelpers.h"
 #include "InputCoreTypes.h"
 #include "imgui.h"
@@ -271,11 +270,29 @@ void ALevel_SquadCoordination::UpdateSquadTargets()
 			}
 		}
 
-		FVector2D PathTarget = ValidSlot;
-		TryGetNavPathTarget(SquadAgent.Agent, ValidSlot, PathTarget);
+		const FVector MoveTarget{ValidSlot.X, ValidSlot.Y, SpawnZ};
+		constexpr float MoveRetargetDistanceSq = 50.f * 50.f;
+		if (!SquadAgent.bHasMoveTarget
+			|| (ValidSlot - SquadAgent.LastMoveTarget).SizeSquared() > MoveRetargetDistanceSq)
+		{
+			if (AAIController* AIController = Cast<AAIController>(SquadAgent.Agent->GetController()))
+			{
+				AIController->MoveToLocation(
+					MoveTarget,
+					ArriveStopRadius,
+					true,
+					true,
+					true,
+					false);
+				SquadAgent.LastMoveTarget = ValidSlot;
+				SquadAgent.bHasMoveTarget = true;
+			}
+		}
 
 		FTargetData FormationTarget{};
-		FormationTarget.Position = PathTarget;
+		// Unreal's path follower handles the real destination and cornering.
+		// The steering layer stays local so agents can still make room for each other.
+		FormationTarget.Position = SquadAgent.Agent->GetPosition();
 		ArriveBehaviors[AgentIndex]->ClearAgentsToAvoid();
 		for (ASteeringAgent* ActiveAgent : ActiveAgents)
 		{
@@ -304,14 +321,10 @@ void ALevel_SquadCoordination::DrawSquadDebug() const
 			continue;
 		}
 
-		// Green points/lines show the current path target. When a wall blocks
-		// the final slot, this will be the next NavMesh corner instead.
+		// Green points/lines show the current slot handed to Unreal's path follower.
 		const FVector2D Slot2D = MouseTarget.Position + GetFormationOffset(AgentIndex);
 		FVector2D DebugTarget = Slot2D;
-		if (TryGetValidNavSlot(Slot2D, DebugTarget))
-		{
-			TryGetNavPathTarget(Agent, DebugTarget, DebugTarget);
-		}
+		TryGetValidNavSlot(Slot2D, DebugTarget);
 
 		const FVector SlotLocation{DebugTarget.X, DebugTarget.Y, DrawZ};
 		DrawDebugPoint(GetWorld(), SlotLocation, 14.f, FColor::Green, false, -1.f, 0);
@@ -546,69 +559,4 @@ bool ALevel_SquadCoordination::TryGetValidNavSlot(const FVector2D& DesiredSlot, 
 	}
 
 	return false;
-}
-
-bool ALevel_SquadCoordination::TryGetNavPathTarget(ASteeringAgent* Agent, const FVector2D& FinalSlot, FVector2D& OutPathTarget) const
-{
-	if (!IsValid(Agent))
-	{
-		return false;
-	}
-
-	const FVector AgentLocation = Agent->GetActorLocation();
-	const FVector FinalLocation{FinalSlot.X, FinalSlot.Y, SpawnZ};
-
-	const UNavigationPath* Path = UNavigationSystemV1::FindPathToLocationSynchronously(
-		GetWorld(),
-		AgentLocation,
-		FinalLocation,
-		Agent);
-
-	if (!Path || !Path->IsValid() || Path->PathPoints.IsEmpty())
-	{
-		return false;
-	}
-
-	// PathPoints[0] is usually the agent's current position. Look ahead through
-	// the path and steer to the farthest waypoint that is directly reachable on
-	// the NavMesh, so agents flow around corners instead of arriving at them.
-	const FVector2D AgentPosition = Agent->GetPosition();
-	const float AgentRadius = Agent->GetCapsuleRadius();
-	const float WaypointReachDistanceSq = FMath::Square(AgentRadius);
-
-	for (int32 PathPointIndex = Path->PathPoints.Num() - 1; PathPointIndex >= 1; --PathPointIndex)
-	{
-		const FVector& PathPoint = Path->PathPoints[PathPointIndex];
-		const FVector2D CandidateTarget{PathPoint.X, PathPoint.Y};
-		if ((CandidateTarget - AgentPosition).SizeSquared() <= WaypointReachDistanceSq)
-		{
-			continue;
-		}
-
-		FVector HitLocation{};
-		const bool bBlocked = UNavigationSystemV1::NavigationRaycast(
-			GetWorld(),
-			AgentLocation,
-			PathPoint,
-			HitLocation);
-
-		if (!bBlocked && TryGetValidNavSlot(CandidateTarget, OutPathTarget))
-		{
-			return true;
-		}
-	}
-
-	for (int32 PathPointIndex = 1; PathPointIndex < Path->PathPoints.Num(); ++PathPointIndex)
-	{
-		const FVector& PathPoint = Path->PathPoints[PathPointIndex];
-		const FVector2D CandidateTarget{PathPoint.X, PathPoint.Y};
-		if ((CandidateTarget - AgentPosition).SizeSquared() > WaypointReachDistanceSq
-			&& TryGetValidNavSlot(CandidateTarget, OutPathTarget))
-		{
-			return true;
-		}
-	}
-
-	OutPathTarget = FinalSlot;
-	return true;
 }

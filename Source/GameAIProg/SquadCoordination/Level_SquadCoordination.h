@@ -42,6 +42,9 @@ struct FSquadAgent
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Squad")
 	ESquadRoles Role{ESquadRoles::Leader};
+
+	FVector2D LastMoveTarget{FVector2D::ZeroVector};
+	bool bHasMoveTarget{false};
 };
 
 UCLASS()
@@ -107,5 +110,4 @@ private:
 	FVector2D GetWedgeFormationOffsetForRole(ESquadRoles SquadRole, int32 RoleOccurrenceIndex) const;
 	
 	bool TryGetValidNavSlot(const FVector2D& DesiredSlot, FVector2D& OutValidSlot) const;
-	bool TryGetNavPathTarget(ASteeringAgent* Agent, const FVector2D& FinalSlot, FVector2D& OutPathTarget) const;
 };
