@@ -11,6 +11,8 @@
 #include "Shared/Level_Base.h"
 #include "Level_SquadCoordination.generated.h"
 
+
+
 class ASteeringAgent;
 
 UENUM(BlueprintType)
@@ -70,7 +72,10 @@ private:
 	float FormationSpacing{260.f};
 
 	UPROPERTY(EditAnywhere, Category="SquadCoordination|Setup")
-	float AgentAvoidanceRadius{350.f};
+	float AgentAvoidanceRadius{75.f};
+
+	UPROPERTY(EditAnywhere, Category="SquadCoordination|Setup")
+	float ArriveStopRadius{25.f};
 
 	UPROPERTY(EditAnywhere, Category="SquadCoordination|Setup")
 	float SpawnZ{90.f};
@@ -92,9 +97,15 @@ private:
 	void UpdateSquadTargets();
 	void DrawSquadDebug() const;
 	void UpdateImGui();
+	
 	ESquadRoles GetRoleForAgentIndex(int32 AgentIndex) const;
+	
 	int32 GetRoleOccurrenceIndex(int32 AgentIndex) const;
+	
 	FVector2D GetFormationOffset(int32 AgentIndex) const;
 	FVector2D RotateFormationOffset(const FVector2D& LocalOffset) const;
 	FVector2D GetWedgeFormationOffsetForRole(ESquadRoles SquadRole, int32 RoleOccurrenceIndex) const;
+	
+	bool TryGetValidNavSlot(const FVector2D& DesiredSlot, FVector2D& OutValidSlot) const;
+	bool TryGetNavPathTarget(ASteeringAgent* Agent, const FVector2D& FinalSlot, FVector2D& OutPathTarget) const;
 };

@@ -54,6 +54,8 @@ public:
 	virtual ~Arrive() = default;
 	const float GetRadiusFar() const {return m_radiusFar;}
 	const float GetRadiusNear() const {return m_radiusNear;}
+	void SetRadiusFar(float InRadiusFar) { m_radiusFar = FMath::Max(0.f, InRadiusFar); }
+	void SetRadiusNear(float InRadiusNear) { m_radiusNear = FMath::Max(0.f, InRadiusNear); }
 	SteeringOutput CalculateSteering(float DeltaT, ASteeringAgent& Agent) override;
 private:
 	float m_radiusFar{ 300.f };

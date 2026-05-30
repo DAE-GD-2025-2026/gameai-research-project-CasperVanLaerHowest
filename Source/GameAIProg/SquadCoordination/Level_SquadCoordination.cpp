@@ -2,6 +2,9 @@
 
 #include "Level_SquadCoordination.h"
 
+#include "NavigationSystem.h"
+#include "NavigationPath.h"
+#include "NavMesh/RecastNavMesh.h"
 #include "DrawDebugHelpers.h"
 #include "InputCoreTypes.h"
 #include "imgui.h"
@@ -249,14 +252,38 @@ void ALevel_SquadCoordination::UpdateSquadTargets()
 
 		// Move each agent toward its own formation slot relative to the current
 		// squad target, rather than sending every agent to the exact same point.
+		const FVector2D DesiredSlot = MouseTarget.Position + GetFormationOffset(AgentIndex);
+		FVector2D ValidSlot{};
+		if (!TryGetValidNavSlot(DesiredSlot, ValidSlot))
+		{
+			// If this formation slot is outside the NavMesh, fall back to the
+			// squad center so the agent still moves somewhere valid.
+			if (!TryGetValidNavSlot(MouseTarget.Position, ValidSlot))
+			{
+				// If even the squad center is invalid, keep the agent near its
+				// current valid area instead of leaving it with a stale target.
+				const FVector AgentLocation = SquadAgent.Agent->GetActorLocation();
+				const FVector2D AgentSlot{AgentLocation.X, AgentLocation.Y};
+				if (!TryGetValidNavSlot(AgentSlot, ValidSlot))
+				{
+					continue;
+				}
+			}
+		}
+
+		FVector2D PathTarget = ValidSlot;
+		TryGetNavPathTarget(SquadAgent.Agent, ValidSlot, PathTarget);
+
 		FTargetData FormationTarget{};
-		FormationTarget.Position = MouseTarget.Position + GetFormationOffset(AgentIndex);
+		FormationTarget.Position = PathTarget;
 		ArriveBehaviors[AgentIndex]->ClearAgentsToAvoid();
 		for (ASteeringAgent* ActiveAgent : ActiveAgents)
 		{
 			ArriveBehaviors[AgentIndex]->AddAgentToAvoid(ActiveAgent);
 		}
 		ArriveBehaviors[AgentIndex]->SetAvoidanceRadius(AgentAvoidanceRadius);
+		ArriveBehaviors[AgentIndex]->SetRadiusNear(ArriveStopRadius);
+		ArriveBehaviors[AgentIndex]->SetRadiusFar(FMath::Max(ArriveStopRadius + 1.f, 300.f));
 		ArriveBehaviors[AgentIndex]->SetTarget(FormationTarget);
 		SquadAgent.Agent->SetDebugRenderingEnabled(bDrawDebug);
 	}
@@ -271,16 +298,22 @@ void ALevel_SquadCoordination::DrawSquadDebug() const
 
 	for (int32 AgentIndex = 0; AgentIndex < SquadAgents.Num(); ++AgentIndex)
 	{
-		const ASteeringAgent* Agent = SquadAgents[AgentIndex].Agent;
+		ASteeringAgent* Agent = SquadAgents[AgentIndex].Agent;
 		if (!IsValid(Agent))
 		{
 			continue;
 		}
 
-		// Green points show the exact slot each agent is trying to reach, and
-		// green lines make it easy to see which agent is assigned to each slot.
+		// Green points/lines show the current path target. When a wall blocks
+		// the final slot, this will be the next NavMesh corner instead.
 		const FVector2D Slot2D = MouseTarget.Position + GetFormationOffset(AgentIndex);
-		const FVector SlotLocation{Slot2D.X, Slot2D.Y, DrawZ};
+		FVector2D DebugTarget = Slot2D;
+		if (TryGetValidNavSlot(Slot2D, DebugTarget))
+		{
+			TryGetNavPathTarget(Agent, DebugTarget, DebugTarget);
+		}
+
+		const FVector SlotLocation{DebugTarget.X, DebugTarget.Y, DrawZ};
 		DrawDebugPoint(GetWorld(), SlotLocation, 14.f, FColor::Green, false, -1.f, 0);
 		DrawDebugLine(GetWorld(), Agent->GetActorLocation(), SlotLocation, FColor::Green, false, -1.f, 0, 2.f);
 	}
@@ -360,6 +393,7 @@ void ALevel_SquadCoordination::UpdateImGui()
 	}
 	ImGui::SliderFloat("Formation spacing", &FormationSpacing, 100.f, 700.f, "%.1f");
 	ImGui::SliderFloat("Avoidance radius", &AgentAvoidanceRadius, 0.f, 900.f, "%.1f");
+	ImGui::SliderFloat("Arrive stop radius", &ArriveStopRadius, 0.f, 150.f, "%.1f");
 
 	const char* FormationLabels[] = {"Wedge", "Column", "Line"};
 	int CurrentFormation = static_cast<int>(SquadFormation);
@@ -493,4 +527,88 @@ FVector2D ALevel_SquadCoordination::GetWedgeFormationOffsetForRole(ESquadRoles S
 	}
 
 	return RotateFormationOffset(LocalOffset);
+}
+
+bool ALevel_SquadCoordination::TryGetValidNavSlot(const FVector2D& DesiredSlot, FVector2D& OutValidSlot) const
+{
+	const FVector DesiredLocation{DesiredSlot.X, DesiredSlot.Y, SpawnZ};
+
+	FNavLocation ProjectedLocation{};
+	const FVector QueryExtent{150.f, 150.f, 300.f};
+
+	if (const UNavigationSystemV1* NavSystem = UNavigationSystemV1::GetCurrent(GetWorld()))
+	{
+		if (NavSystem->ProjectPointToNavigation(DesiredLocation, ProjectedLocation, QueryExtent))
+		{
+			OutValidSlot = FVector2D{ProjectedLocation.Location.X, ProjectedLocation.Location.Y};
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool ALevel_SquadCoordination::TryGetNavPathTarget(ASteeringAgent* Agent, const FVector2D& FinalSlot, FVector2D& OutPathTarget) const
+{
+	if (!IsValid(Agent))
+	{
+		return false;
+	}
+
+	const FVector AgentLocation = Agent->GetActorLocation();
+	const FVector FinalLocation{FinalSlot.X, FinalSlot.Y, SpawnZ};
+
+	const UNavigationPath* Path = UNavigationSystemV1::FindPathToLocationSynchronously(
+		GetWorld(),
+		AgentLocation,
+		FinalLocation,
+		Agent);
+
+	if (!Path || !Path->IsValid() || Path->PathPoints.IsEmpty())
+	{
+		return false;
+	}
+
+	// PathPoints[0] is usually the agent's current position. Look ahead through
+	// the path and steer to the farthest waypoint that is directly reachable on
+	// the NavMesh, so agents flow around corners instead of arriving at them.
+	const FVector2D AgentPosition = Agent->GetPosition();
+	const float AgentRadius = Agent->GetCapsuleRadius();
+	const float WaypointReachDistanceSq = FMath::Square(AgentRadius);
+
+	for (int32 PathPointIndex = Path->PathPoints.Num() - 1; PathPointIndex >= 1; --PathPointIndex)
+	{
+		const FVector& PathPoint = Path->PathPoints[PathPointIndex];
+		const FVector2D CandidateTarget{PathPoint.X, PathPoint.Y};
+		if ((CandidateTarget - AgentPosition).SizeSquared() <= WaypointReachDistanceSq)
+		{
+			continue;
+		}
+
+		FVector HitLocation{};
+		const bool bBlocked = UNavigationSystemV1::NavigationRaycast(
+			GetWorld(),
+			AgentLocation,
+			PathPoint,
+			HitLocation);
+
+		if (!bBlocked && TryGetValidNavSlot(CandidateTarget, OutPathTarget))
+		{
+			return true;
+		}
+	}
+
+	for (int32 PathPointIndex = 1; PathPointIndex < Path->PathPoints.Num(); ++PathPointIndex)
+	{
+		const FVector& PathPoint = Path->PathPoints[PathPointIndex];
+		const FVector2D CandidateTarget{PathPoint.X, PathPoint.Y};
+		if ((CandidateTarget - AgentPosition).SizeSquared() > WaypointReachDistanceSq
+			&& TryGetValidNavSlot(CandidateTarget, OutPathTarget))
+		{
+			return true;
+		}
+	}
+
+	OutPathTarget = FinalSlot;
+	return true;
 }
