@@ -106,6 +106,10 @@ The squad uses behavior tree logic to select the current movement state for each
 | Support Low Health Ally | Hold position and face the enemy while an ally is unsafe. |
 | Patrol | Used by the patrol enemy test actor. |
 
+![Support behavior when an enemy threatens a low-health teammate](Content/Gifs/enemy_defence.gif)
+
+*Figure 1: A healthy squad member supports a low-health teammate while the patrol enemy is in range.*
+
 ### Stuck Recovery
 
 The prototype detects a stuck agent by checking whether the agent is still far from its assigned slot while making very little movement progress. When this happens, the agent temporarily receives a relaxed slot near its original formation position. After reaching that relaxed slot or making progress again, the agent returns to its normal formation slot.
@@ -123,6 +127,10 @@ The `Automatic formation` option in the ImGui panel lets the squad choose its fo
 | Sides are open but forward space is blocked | Line |
 
 When automatic formation is disabled, the formation can be selected manually from the ImGui combo box.
+
+![Automatic formation adaptation while the squad moves through changing terrain](Content/Gifs/automatic_formation.gif)
+
+*Figure 2: The squad automatically changes formation when the surrounding navigable space changes.*
 
 ## Evaluation
 
