@@ -181,12 +181,14 @@ private:
 	float TimeSinceTargetSet{0.f};
 	float LastSettleTime{0.f};
 	bool bHasSettledForTarget{false};
+	bool bHasAutomaticFormationForTarget{false};
 
 	void SpawnSquad(const FVector& SpawnCenter);
 	void AddAgentToSquad(const FVector& SpawnCenter, ESquadRoles AgentRole);
 	void RemoveAgentFromSquad();
 	void SpawnPatrolEnemy(const FVector& SpawnCenter);
 	void SetSquadTargetFromMouse();
+	void ResetTargetEvaluation();
 	void UpdateAutomaticFormation();
 	void UpdateSquadTargets(float DeltaTime);
 	void UpdateResearchMetrics(const TArray<FVector2D>& AssignedSlots);

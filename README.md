@@ -114,7 +114,7 @@ This keeps the formation from becoming completely rigid while still preserving t
 
 ### Automatic Formation Adaptation
 
-The `Automatic formation` option in the ImGui panel lets the squad choose its formation based on nearby navigable space. The system samples the NavMesh around the squad target.
+The `Automatic formation` option in the ImGui panel lets the squad choose its formation based on nearby navigable space. The system samples the NavMesh around the squad target once when a new target is selected, then keeps that formation until the player clicks a new target or changes the formation settings.
 
 | Environment check | Chosen formation |
 | --- | --- |

@@ -96,7 +96,6 @@ void ALevel_SquadCoordination::Tick(float DeltaTime)
 	// Recalculate targets every frame so formation spacing/debug changes in the
 	// UI immediately affect the squad without needing another click.
 	TimeSinceTargetSet += DeltaTime;
-	UpdateAutomaticFormation();
 	UpdateSquadTargets(DeltaTime);
 
 	if (bDrawDebug)
@@ -501,17 +500,30 @@ void ALevel_SquadCoordination::SetSquadTargetFromMouse()
 	// MouseTarget is the squad's center point; individual agents offset from it
 	// to form the surrounding pattern.
 	MouseTarget.Position = FVector2D{LatestMouseWorldPos};
-	TimeSinceTargetSet = 0.f;
-	LastSettleTime = 0.f;
-	bHasSettledForTarget = false;
-	ResearchMetrics.bFormationSettled = false;
+	ResetTargetEvaluation();
 	UpdateAutomaticFormation();
 	UpdateSquadTargets(0.f);
 }
 
+void ALevel_SquadCoordination::ResetTargetEvaluation()
+{
+	TimeSinceTargetSet = 0.f;
+	LastSettleTime = 0.f;
+	bHasSettledForTarget = false;
+	bHasAutomaticFormationForTarget = false;
+	ResearchMetrics.bFormationSettled = false;
+	for (FSquadAgent& SquadAgent : SquadAgents)
+	{
+		SquadAgent.StuckTimer = 0.f;
+		SquadAgent.bUsingRelaxedSlot = false;
+	}
+}
+
 void ALevel_SquadCoordination::UpdateAutomaticFormation()
 {
-	if (!bUseAutomaticFormation || CoordinationMode == ESquadCoordinationMode::SharedTargetBaseline)
+	if (!bUseAutomaticFormation
+		|| bHasAutomaticFormationForTarget
+		|| CoordinationMode == ESquadCoordinationMode::SharedTargetBaseline)
 	{
 		return;
 	}
@@ -537,15 +549,8 @@ void ALevel_SquadCoordination::UpdateAutomaticFormation()
 	if (SquadFormation != DesiredFormation)
 	{
 		SquadFormation = DesiredFormation;
-		TimeSinceTargetSet = 0.f;
-		LastSettleTime = 0.f;
-		bHasSettledForTarget = false;
-		for (FSquadAgent& SquadAgent : SquadAgents)
-		{
-			SquadAgent.StuckTimer = 0.f;
-			SquadAgent.bUsingRelaxedSlot = false;
-		}
 	}
+	bHasAutomaticFormationForTarget = true;
 }
 
 void ALevel_SquadCoordination::RebuildPatrolRoute()
@@ -911,14 +916,10 @@ void ALevel_SquadCoordination::UpdateImGui()
 	if (ImGui::Combo("Research mode", &CurrentMode, ModeLabels, IM_ARRAYSIZE(ModeLabels)))
 	{
 		CoordinationMode = static_cast<ESquadCoordinationMode>(CurrentMode);
-		TimeSinceTargetSet = 0.f;
-		LastSettleTime = 0.f;
-		bHasSettledForTarget = false;
-		ResearchMetrics.bFormationSettled = false;
+		ResetTargetEvaluation();
+		UpdateAutomaticFormation();
 		for (FSquadAgent& SquadAgent : SquadAgents)
 		{
-			SquadAgent.StuckTimer = 0.f;
-			SquadAgent.bUsingRelaxedSlot = false;
 			if (IsValid(SquadAgent.Agent))
 			{
 				SquadAgent.LastPosition = SquadAgent.Agent->GetPosition();
@@ -936,10 +937,16 @@ void ALevel_SquadCoordination::UpdateImGui()
 	ImGui::SliderFloat("Settled slot error", &SettledSlotError, 25.f, 300.f, "%.1f");
 	ImGui::SliderFloat("Stuck progress distance", &StuckProgressDistance, 1.f, 80.f, "%.1f");
 	ImGui::SliderFloat("Stuck time threshold", &StuckTimeThreshold, 0.25f, 5.f, "%.2f");
-	ImGui::Checkbox("Automatic formation", &bUseAutomaticFormation);
-	ImGui::SliderFloat("Auto side probe distance", &AutoFormationSideProbeDistance, 150.f, 900.f, "%.1f");
-	ImGui::SliderFloat("Auto forward probe distance", &AutoFormationForwardProbeDistance, 150.f, 1100.f, "%.1f");
-	ImGui::SliderFloat("Auto probe radius", &AutoFormationProbeRadius, 20.f, 180.f, "%.1f");
+	bool bAutoFormationSettingsChanged = false;
+	bAutoFormationSettingsChanged |= ImGui::Checkbox("Automatic formation", &bUseAutomaticFormation);
+	bAutoFormationSettingsChanged |= ImGui::SliderFloat("Auto side probe distance", &AutoFormationSideProbeDistance, 150.f, 900.f, "%.1f");
+	bAutoFormationSettingsChanged |= ImGui::SliderFloat("Auto forward probe distance", &AutoFormationForwardProbeDistance, 150.f, 1100.f, "%.1f");
+	bAutoFormationSettingsChanged |= ImGui::SliderFloat("Auto probe radius", &AutoFormationProbeRadius, 20.f, 180.f, "%.1f");
+	if (bAutoFormationSettingsChanged)
+	{
+		ResetTargetEvaluation();
+		UpdateAutomaticFormation();
+	}
 	const char* RoleLabels[] = {"Leader", "Left Flank", "Right Flank", "Rear Support"};
 	int NewAgentRoleIndex = static_cast<int>(NewAgentRole);
 	if (ImGui::Combo("New agent role", &NewAgentRoleIndex, RoleLabels, IM_ARRAYSIZE(RoleLabels)))
@@ -1023,9 +1030,7 @@ void ALevel_SquadCoordination::UpdateImGui()
 	if (ImGui::Combo("Formation", &CurrentFormation, FormationLabels, IM_ARRAYSIZE(FormationLabels)))
 	{
 		SquadFormation = static_cast<ESquadFormation>(CurrentFormation);
-		TimeSinceTargetSet = 0.f;
-		LastSettleTime = 0.f;
-		bHasSettledForTarget = false;
+		ResetTargetEvaluation();
 	}
 	if (bUseAutomaticFormation)
 	{
