@@ -45,6 +45,28 @@ namespace
 			return "Unknown";
 		}
 	}
+
+	bool HasDistinctPatrolPoints(const TArray<FVector>& PatrolPoints, const float MinDistance)
+	{
+		if (PatrolPoints.Num() < 4)
+		{
+			return false;
+		}
+
+		const float MinDistanceSq = FMath::Square(MinDistance);
+		for (int32 PointIndex = 0; PointIndex < PatrolPoints.Num(); ++PointIndex)
+		{
+			for (int32 OtherPointIndex = PointIndex + 1; OtherPointIndex < PatrolPoints.Num(); ++OtherPointIndex)
+			{
+				if (FVector::DistSquared2D(PatrolPoints[PointIndex], PatrolPoints[OtherPointIndex]) < MinDistanceSq)
+				{
+					return false;
+				}
+			}
+		}
+
+		return true;
+	}
 }
 
 ALevel_SquadCoordination::ALevel_SquadCoordination()
@@ -97,6 +119,11 @@ void ALevel_SquadCoordination::Tick(float DeltaTime)
 	// UI immediately affect the squad without needing another click.
 	TimeSinceTargetSet += DeltaTime;
 	UpdateSquadTargets(DeltaTime);
+
+	if (!HasDistinctPatrolPoints(PatrolEnemyPoints, 180.f))
+	{
+		RebuildPatrolRoute();
+	}
 
 	if (bDrawDebug)
 	{
@@ -571,20 +598,141 @@ void ALevel_SquadCoordination::RebuildPatrolRoute()
 		FVector{-520.f, 520.f, 0.f}
 	};
 
+	const auto ProjectPatrolPoint = [this](const FVector& DesiredPoint, FVector2D& OutProjectedPoint)
+	{
+		const UNavigationSystemV1* NavSystem = UNavigationSystemV1::GetCurrent(GetWorld());
+		if (!NavSystem)
+		{
+			return false;
+		}
+
+		const FVector QueryExtents[] = {
+			FVector{180.f, 180.f, 300.f},
+			FVector{420.f, 420.f, 300.f},
+			FVector{850.f, 850.f, 300.f}
+		};
+
+		for (const FVector& QueryExtent : QueryExtents)
+		{
+			FNavLocation ProjectedLocation{};
+			if (NavSystem->ProjectPointToNavigation(DesiredPoint, ProjectedLocation, QueryExtent))
+			{
+				OutProjectedPoint = FVector2D{ProjectedLocation.Location.X, ProjectedLocation.Location.Y};
+				return true;
+			}
+		}
+
+		return false;
+	};
+
+	FVector2D ProjectedRouteCenter{RouteCenter};
+	ProjectPatrolPoint(RouteCenter, ProjectedRouteCenter);
+
+	TArray<FVector2D> ProjectedPatrolPoints{};
+	ProjectedPatrolPoints.Reserve(4);
+	const float MinPatrolPointDistanceSq = FMath::Square(180.f);
+
 	for (const FVector& Offset : PatrolOffsets)
 	{
 		FVector2D ProjectedPoint{};
-		const FVector DesiredPoint = RouteCenter + Offset;
-		if (TryGetValidNavSlot(FVector2D{DesiredPoint}, ProjectedPoint))
+		const float OffsetScales[] = {1.f, 0.75f, 0.5f, 0.25f};
+		bool bFoundPatrolPoint = false;
+		for (const float OffsetScale : OffsetScales)
 		{
-			PatrolEnemyPoints.Add(FVector{ProjectedPoint.X, ProjectedPoint.Y, SpawnZ});
+			const FVector DesiredPoint = RouteCenter + Offset * OffsetScale;
+			if (!ProjectPatrolPoint(DesiredPoint, ProjectedPoint))
+			{
+				continue;
+			}
+
+			bool bFarEnoughFromExistingPoints = true;
+			for (const FVector2D& ExistingPoint : ProjectedPatrolPoints)
+			{
+				if (FVector2D::DistSquared(ExistingPoint, ProjectedPoint) < MinPatrolPointDistanceSq)
+				{
+					bFarEnoughFromExistingPoints = false;
+					break;
+				}
+			}
+
+			if (bFarEnoughFromExistingPoints)
+			{
+				bFoundPatrolPoint = true;
+				break;
+			}
+		}
+
+		if (!bFoundPatrolPoint)
+		{
+			ProjectedPoint = ProjectedRouteCenter;
+		}
+
+		ProjectedPatrolPoints.Add(ProjectedPoint);
+	}
+
+	bool bHasDistinctPatrolRoute = ProjectedPatrolPoints.Num() == 4;
+	if (bHasDistinctPatrolRoute)
+	{
+		for (int32 PointIndex = 0; PointIndex < ProjectedPatrolPoints.Num(); ++PointIndex)
+		{
+			for (int32 OtherPointIndex = PointIndex + 1; OtherPointIndex < ProjectedPatrolPoints.Num(); ++OtherPointIndex)
+			{
+				if (FVector2D::DistSquared(ProjectedPatrolPoints[PointIndex], ProjectedPatrolPoints[OtherPointIndex]) < MinPatrolPointDistanceSq)
+				{
+					bHasDistinctPatrolRoute = false;
+					break;
+				}
+			}
+
+			if (!bHasDistinctPatrolRoute)
+			{
+				break;
+			}
 		}
 	}
 
-	if (PatrolEnemyPoints.Num() < 2)
+	if (!bHasDistinctPatrolRoute)
 	{
-		PatrolEnemyPoints.Add(RouteCenter);
-		PatrolEnemyPoints.Add(RouteCenter + FVector{450.f, 0.f, 0.f});
+		ProjectedPatrolPoints.Reset();
+		const FVector CompactPatrolOffsets[] = {
+			FVector{-260.f, -260.f, 0.f},
+			FVector{260.f, -260.f, 0.f},
+			FVector{260.f, 260.f, 0.f},
+			FVector{-260.f, 260.f, 0.f}
+		};
+
+		for (const FVector& Offset : CompactPatrolOffsets)
+		{
+			FVector2D ProjectedPoint{};
+			const FVector DesiredPoint{
+				ProjectedRouteCenter.X + Offset.X,
+				ProjectedRouteCenter.Y + Offset.Y,
+				SpawnZ
+			};
+			if (!ProjectPatrolPoint(DesiredPoint, ProjectedPoint))
+			{
+				ProjectedPoint = FVector2D{
+					ProjectedRouteCenter.X + Offset.X * 0.5f,
+					ProjectedRouteCenter.Y + Offset.Y * 0.5f
+				};
+			}
+
+			for (const FVector2D& ExistingPoint : ProjectedPatrolPoints)
+			{
+				if (FVector2D::DistSquared(ExistingPoint, ProjectedPoint) < MinPatrolPointDistanceSq)
+				{
+					ProjectedPoint = FVector2D{DesiredPoint.X, DesiredPoint.Y};
+					break;
+				}
+			}
+
+			ProjectedPatrolPoints.Add(ProjectedPoint);
+		}
+	}
+
+	for (const FVector2D& ProjectedPoint : ProjectedPatrolPoints)
+	{
+		PatrolEnemyPoints.Add(FVector{ProjectedPoint.X, ProjectedPoint.Y, SpawnZ});
 	}
 }
 

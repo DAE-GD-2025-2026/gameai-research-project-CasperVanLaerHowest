@@ -14,6 +14,9 @@ class GAMEAIPROG_API AGameAIController : public AAIController
 public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category="AI|BehaviorTree")
 	TObjectPtr<UBlackboardData> BehaviorTreeBlackboardAsset;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UBlackboardData> RuntimeBehaviorTreeBlackboardAsset;
 	
 	// Sets default values for this actor's properties
 	AGameAIController();

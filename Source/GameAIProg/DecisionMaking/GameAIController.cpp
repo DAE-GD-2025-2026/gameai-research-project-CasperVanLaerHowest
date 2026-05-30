@@ -79,6 +79,7 @@ namespace
 		EnsureKey<UBlackboardKeyType_Bool>(BlackboardData, TEXT("HasLowHealthAlly"));
 		EnsureKey<UBlackboardKeyType_Bool>(BlackboardData, TEXT("IsTooFarFromFormation"));
 		EnsureKey<UBlackboardKeyType_Bool>(BlackboardData, TEXT("IsPatrolOnly"));
+		EnsureKey<UBlackboardKeyType_Bool>(BlackboardData, TEXT("IsSlotBlocked"));
 	}
 }
 
@@ -121,13 +122,20 @@ void AGameAIController::InitBehaviorTree()
 		return;
 	}
 
-	EnsureSquadBlackboardKeys(*BehaviorTreeBlackboardAsset);
+	RuntimeBehaviorTreeBlackboardAsset = DuplicateObject<UBlackboardData>(BehaviorTreeBlackboardAsset, this);
+	if (!RuntimeBehaviorTreeBlackboardAsset)
+	{
+		UE_LOG(LogTemp, Error, TEXT("BehaviorTree: Failed to create runtime blackboard asset on %s."), *GetName());
+		return;
+	}
+
+	EnsureSquadBlackboardKeys(*RuntimeBehaviorTreeBlackboardAsset);
 
 	UBlackboardComponent* BlackboardComp = Blackboard;
-	if (!UseBlackboard(BehaviorTreeBlackboardAsset, BlackboardComp))
+	if (!UseBlackboard(RuntimeBehaviorTreeBlackboardAsset, BlackboardComp))
 	{
 		UE_LOG(LogTemp, Error, TEXT("BehaviorTree: Failed to initialize blackboard asset %s on %s."),
-			*BehaviorTreeBlackboardAsset->GetName(),
+			*RuntimeBehaviorTreeBlackboardAsset->GetName(),
 			*GetName());
 		return;
 	}
