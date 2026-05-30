@@ -10,7 +10,6 @@
 #include "BehaviorTree/Blackboard/BlackboardKeyType_Float.h"
 #include "BehaviorTree/Blackboard/BlackboardKeyType_Object.h"
 #include "BehaviorTree/Blackboard/BlackboardKeyType_Vector.h"
-#include "FSM/FSMComponent.h"
 #include "GameFramework/Actor.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -61,15 +60,6 @@ namespace
 		BlackboardData.Keys.Add(Entry);
 	}
 
-	void EnsureFSMBlackboardKeys(UBlackboardData& BlackboardData)
-	{
-		EnsureObjectKey(BlackboardData, TEXT("TargetActor"), AActor::StaticClass());
-		EnsureKey<UBlackboardKeyType_Vector>(BlackboardData, TEXT("LastKnownTargetLocation"));
-		EnsureKey<UBlackboardKeyType_Bool>(BlackboardData, TEXT("HasLastKnownTarget"));
-		EnsureKey<UBlackboardKeyType_Float>(BlackboardData, TEXT("SearchStartTime"));
-		EnsureKey<UBlackboardKeyType_Bool>(BlackboardData, TEXT("SearchReachedLastKnownLocation"));
-	}
-
 	void EnsureSquadBlackboardKeys(UBlackboardData& BlackboardData)
 	{
 		EnsureObjectKey(BlackboardData, TEXT("SquadLeader"), AActor::StaticClass());
@@ -99,14 +89,12 @@ AGameAIController::AGameAIController()
 	// Set this actor to call Tick() every frame.  You can turn this off to improve performance if you don't need it.
 	PrimaryActorTick.bCanEverTick = true;
 	BrainComponent = CreateDefaultSubobject<UGameAIBehaviorTreeComponent>(TEXT("BehaviorTreeComponent"));
-	CreateDefaultSubobject<UFSMComponent>(TEXT("FSMComponent"));
 
-	static ConstructorHelpers::FObjectFinder<UBlackboardData> DefaultFSMBlackboardAsset(
+	static ConstructorHelpers::FObjectFinder<UBlackboardData> DefaultBlackboardAsset(
 		TEXT("/Game/DecisionMaking/BB_TEST.BB_TEST"));
-	if (DefaultFSMBlackboardAsset.Succeeded())
+	if (DefaultBlackboardAsset.Succeeded())
 	{
-		FSMBlackboardAsset = DefaultFSMBlackboardAsset.Object;
-		BehaviorTreeBlackboardAsset = DefaultFSMBlackboardAsset.Object;
+		BehaviorTreeBlackboardAsset = DefaultBlackboardAsset.Object;
 	}
 }
 
@@ -117,42 +105,12 @@ void AGameAIController::BeginPlay()
 	
 	// Create Blackboard if need be
 	InitBehaviorTree();
-	InitFiniteStateMachine();
 }
 
 // Called every frame
 void AGameAIController::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-}
-
-void AGameAIController::InitFiniteStateMachine()
-{
-	UFSMComponent* FSMComp = FindComponentByClass<UFSMComponent>();
-	if (!ensure(FSMComp))
-	{
-		return;
-	}
-
-	if (!FSMBlackboardAsset)
-	{
-		UE_LOG(LogTemp, Error, TEXT("FSM: No blackboard asset assigned on %s."), *GetName());
-		return;
-	}
-
-	EnsureFSMBlackboardKeys(*FSMBlackboardAsset);
-	EnsureSquadBlackboardKeys(*FSMBlackboardAsset);
-
-	UBlackboardComponent* BlackboardComp = Blackboard;
-	if (!UseBlackboard(FSMBlackboardAsset, BlackboardComp))
-	{
-		UE_LOG(LogTemp, Error, TEXT("FSM: Failed to initialize blackboard asset %s on %s."),
-			*FSMBlackboardAsset->GetName(),
-			*GetName());
-		return;
-	}
-
-	Blackboard = BlackboardComp;
 }
 
 void AGameAIController::InitBehaviorTree()
@@ -163,7 +121,6 @@ void AGameAIController::InitBehaviorTree()
 		return;
 	}
 
-	EnsureFSMBlackboardKeys(*BehaviorTreeBlackboardAsset);
 	EnsureSquadBlackboardKeys(*BehaviorTreeBlackboardAsset);
 
 	UBlackboardComponent* BlackboardComp = Blackboard;
@@ -176,15 +133,6 @@ void AGameAIController::InitBehaviorTree()
 	}
 
 	Blackboard = BlackboardComp;
-}
-
-void AGameAIController::RunFiniteStateMachine()
-{
-	UFSMComponent* FSMComp = FindComponentByClass<UFSMComponent>();
-	if (ensure(FSMComp))
-	{
-		FSMComp->StartLogic();
-	}
 }
 
 void AGameAIController::RunBehaviorTreeLogic()

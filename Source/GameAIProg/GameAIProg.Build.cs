@@ -19,13 +19,8 @@ public class GameAIProg : ModuleRules
 			"EnhancedInput",
 			"AIModule",
 			"NavigationSystem",
-			"StateTreeModule",
-			"GameplayStateTreeModule",
-			"Niagara",
-			"UMG",
 			"Slate",
 			"ImGui",
-			"Navmesh",
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] { });

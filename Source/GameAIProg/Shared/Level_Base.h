@@ -13,7 +13,6 @@
 #include "GameAIProg/Movement/SteeringBehaviors/SteeringHelpers.h"
 #include "GameAIProg/Movement/SteeringBehaviors/SteeringAgent.h"
 #include "GameAIProg/Shared/WorldTrimVolume.h"
-#include "Shared/ImGuiHelpers.h"
 
 #include "Level_Base.generated.h"
 
