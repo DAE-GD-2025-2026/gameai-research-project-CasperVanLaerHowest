@@ -4,115 +4,70 @@
 
 How can formation movement be implemented for a squad of AI agents in Unreal Engine while maintaining believable coordination and adaptability in dynamic environments?
 
-## Portfolio Piece Description
-
-This project researches and prototypes a squad coordination AI system in Unreal Engine. The system focuses on dynamic formation movement, role-based positioning, obstacle adaptation, and believable group behavior for AI-controlled agents.
-
-The prototype also includes a research comparison mode. The squad can be switched between a coordinated role-based formation and a simple shared-target baseline where every agent receives the same destination. This makes it possible to compare coordinated movement against a naive group movement approach inside the same level.
-
 ## Abstract
 
-In many games, AI agents are often controlled as individual characters. However, squad-based enemies or companions need to move as a coordinated group to appear believable to the player. This research investigates how formation movement can be implemented in Unreal Engine by combining a squad-level coordination system with individual AI navigation.
+In many games, AI agents are often controlled as individual characters. However, squad-based enemies or companions need to move as a coordinated group to appear believable to the player. This project investigates how formation movement can be implemented in Unreal Engine by combining squad-level coordination with individual agent navigation.
 
-The proposed system uses a squad manager to assign agents to formation slots based on their role, such as leader, flanker, support, or rear guard. Each slot is calculated relative to the squad leader or formation center. Unreal Engine's navigation system is then used to move each agent toward its assigned position. To improve adaptability, the system should allow agents to temporarily break formation when blocked by obstacles and return to their assigned slot when the path becomes available again.
+The implemented prototype uses role-based formation slots, behavior tree states, NavMesh target projection, local avoidance, stuck recovery, and automatic formation adaptation. A comparison mode is included where every agent moves toward the same shared target. This baseline makes it possible to compare coordinated formation movement against a simpler approach where agents do not receive individual formation slots.
 
-The goal of this research is not to create perfectly rigid formation movement, but to create movement that feels coordinated, readable, and believable during gameplay.
+The goal is not to create perfectly rigid military movement, but to create group movement that remains readable, believable, and adaptable when the squad moves through different spaces.
 
 ## Introduction
 
-Squad movement is an important part of believable game AI. When multiple AI agents move together, they should appear aware of each other and of the environment around them. If every agent simply moves independently toward the same target, the group can look chaotic, overlap with each other, or get stuck around obstacles. On the other hand, if the formation is too strict, the agents can look robotic and fail to adapt naturally to the level geometry.
+Squad movement is an important part of believable game AI. When several AI agents move together, they should appear aware of each other and of the surrounding environment. If every agent simply receives the same destination, the group can overlap, cluster, or move in a chaotic way. If the formation is too strict, the squad can look robotic and fail to adapt to obstacles or narrow spaces.
 
-This research focuses on formation movement for a squad of AI agents in Unreal Engine. The main challenge is finding a balance between centralized coordination and local adaptation. A squad-level system can provide structure by assigning positions and roles, while each individual AI agent still needs enough freedom to navigate around obstacles and react to movement problems.
-
-## Research Goals
-
-- Investigate how squad formations can be represented in Unreal Engine.
-- Design a role-based formation system for multiple AI agents.
-- Explore how agents can maintain formation while moving through an environment.
-- Research how obstacles and narrow spaces can affect formation movement.
-- Create a believable balance between group coordination and individual navigation.
-- Evaluate whether the resulting movement appears clear and natural to the player.
+This research focuses on balancing centralized coordination with local adaptation. The squad-level system defines the desired formation, roles, and target slots. Individual agents then use Unreal Engine navigation and steering behavior to move toward those slots while still reacting to local movement problems.
 
 ## Background
 
 ### Formation Movement
 
-Formation movement is a technique where multiple agents move together while trying to maintain a specific shape. Common examples include line, wedge, column, and diamond formations. Instead of giving every agent the same destination, each agent receives a target position inside the formation.
+Formation movement gives each agent a target position inside a group shape instead of sending all agents to the same destination. Common formation examples are wedge, column, and line. This makes the squad more readable because every member has a clear place in the group.
 
 ### Leader-Follower Coordination
 
-A common approach is to use a leader or formation center. The other agents calculate their positions relative to this leader. When the leader moves or rotates, the formation slots move with it. This makes the group easier to control because the squad can be directed through a single reference point.
+The prototype uses a shared squad target as the center of the formation. Each agent calculates its slot as an offset from this target. The formation orientation is based on the leader's rotation, allowing the formation to rotate as the squad moves.
 
 ### Role-Based Positioning
 
-Role-based positioning gives each agent a purpose within the formation. For example, stronger units may be placed at the front, ranged units may stay behind, and support units may remain near the center. This makes the formation more meaningful than a simple visual pattern.
+Each squad member has a role: leader, left flank, right flank, or rear support. These roles determine the agent's default position in the wedge formation. The role system makes the formation more meaningful than a purely visual pattern, because agents can be assigned different behavior or tactical meaning.
 
 ### Believable Adaptation
 
-A believable formation system should not force agents to stay in perfect positions at all times. In dynamic environments, agents may need to avoid obstacles, wait for space, temporarily move out of formation, or rejoin after being blocked. Small imperfections can make the group look more natural, as long as the overall formation remains readable.
+Believable squad coordination does not require agents to hold perfect positions at all times. In dynamic environments, agents may need to avoid each other, temporarily relax their assigned slot, or switch formation when the level layout becomes narrow. The prototype supports this by combining NavMesh projection, local avoidance, stuck detection, relaxed fallback slots, and automatic formation switching.
 
-## Proposed System
+## Method
 
-The proposed system consists of a squad manager and multiple AI agents.
+The prototype compares two squad movement modes.
 
-### Squad Manager
+| Mode | Description |
+| --- | --- |
+| Shared target baseline | Every squad member receives the same target position. |
+| Role-based formation | Every squad member receives an individual formation slot. |
 
-The squad manager is responsible for the high-level coordination of the group. It stores the squad members, the active formation type, the leader or formation center, and the role assigned to each agent.
+The baseline is included to show why squad coordination is useful. In the baseline mode, agents can reach the target but tend to cluster around the same point. In the role-based mode, the squad keeps a more readable shape because each agent has its own assigned location.
 
-Possible responsibilities:
+## Implementation
 
-- Keep track of all squad members.
-- Store the current formation.
-- Assign each agent to a role.
-- Calculate formation slot positions.
-- Update target positions when the squad moves.
-- Decide when the formation should change.
+The main implementation is located in `Source/GameAIProg/SquadCoordination/Level_SquadCoordination.cpp`.
 
-### AI Agents
-
-Each AI agent is responsible for moving toward its assigned formation slot. The agent uses Unreal Engine's navigation system to reach the target position. If the slot is blocked or unreachable, the agent can temporarily move to a fallback position and later try to return to its original slot.
-
-Possible responsibilities:
-
-- Receive a target slot from the squad manager.
-- Move toward the assigned slot using AI movement.
-- Avoid obstacles using Unreal's NavMesh.
-- Detect when the assigned slot cannot be reached.
-- Rejoin the formation after avoiding an obstacle.
-
-## Implemented Prototype
-
-The Unreal Engine prototype is implemented in `Source/GameAIProg/SquadCoordination/Level_SquadCoordination.cpp`. The current version includes:
+The system includes:
 
 - Role-based squad members: leader, left flank, right flank, and rear support.
 - Formation layouts: wedge, column, and line.
 - A shared squad target set by mouse input.
-- Per-agent formation slots calculated from the squad target and active formation.
-- NavMesh projection for formation slots so agents receive reachable movement targets when possible.
-- A baseline comparison mode where all agents move to the same target instead of using formation slots.
+- Individual formation slots calculated from the squad target and active formation.
+- NavMesh projection for formation slots.
+- A shared-target baseline comparison mode.
+- Automatic formation adaptation based on nearby navigable space.
 - Local avoidance through an avoidance-aware arrive steering behavior.
 - Behavior tree states for formation following, rejoining, low-health fallback, ally support, and patrol behavior.
-- A patrol enemy used to test low-health fallback and support behavior.
-- Runtime research metrics shown in the ImGui panel.
+- A patrol enemy used to test low-health fallback and ally support.
+- Runtime metrics shown in the ImGui panel.
 
-### Runtime Research Metrics
+### Formation Slots
 
-The debug panel reports values that can be used in the paper:
-
-| Metric | Meaning |
-| --- | --- |
-| Average slot error | Average distance between each agent and its assigned target slot. |
-| Max slot error | Worst current distance between an agent and its assigned slot. |
-| Average spacing error | How far the current distances between agents differ from the desired formation distances. |
-| Stuck agents | Number of agents that are no longer making enough progress toward their assigned slot. |
-| Relaxed slots | Number of agents temporarily using a fallback slot after being detected as stuck. |
-| Settle time | Approximate time after a new target before the formation is considered close enough to its slots. |
-
-These metrics are intended for comparison between the role-based formation mode and the shared-target baseline.
-
-## Formation Slot Example
-
-Formation slots can be stored as local offsets from the leader or formation center.
+Formation slots are stored as local offsets from the squad target. For example, the wedge formation places the leader at the front, flankers behind and to the sides, and support behind the group.
 
 ```text
 Wedge formation
@@ -124,130 +79,101 @@ Wedge formation
         Rear Support
 ```
 
-Example slot offsets:
+Example offsets:
 
 | Role | Local Offset |
 | --- | --- |
 | Leader | `(0, 0)` |
-| Left Flank | `(-300, -300)` |
-| Right Flank | `(300, -300)` |
-| Rear Support | `(0, -600)` |
+| Left Flank | `(-spacing, -spacing)` |
+| Right Flank | `(-spacing, spacing)` |
+| Rear Support | `(-2 * spacing, 0)` |
 
-These local offsets can be converted into world positions using the leader's position and rotation. Each agent then receives its world-space slot as a movement target.
+The local offset is rotated using the leader's direction and then added to the squad target. This produces a world-space slot for each agent.
 
-## Unreal Engine Implementation Plan
+### Navigation
 
-1. Create a squad manager actor or component.
-2. Register all squad AI agents with the squad manager.
-3. Assign each agent a role inside the squad.
-4. Define formation data as local offsets.
-5. Convert formation offsets into world-space positions.
-6. Project each target position onto the NavMesh.
-7. Send each AI agent to its assigned target position.
-8. Detect blocked or unreachable slots.
-9. Use fallback positions when agents cannot reach their assigned slot.
-10. Allow agents to return to their original slot after the obstacle is cleared.
+Each desired slot is projected onto Unreal Engine's NavMesh before it is used as a movement target. If a slot cannot be projected, the system falls back to the squad center or the agent's current navigable area. This prevents agents from receiving unreachable targets outside the navigation mesh.
 
-## Adaptability Strategies
+### Behavior Tree States
 
-### Formation Compression
+The squad uses behavior tree logic to select the current movement state for each agent.
 
-When the squad moves through narrow spaces, the distance between agents can be reduced. This helps the group pass through corridors without completely breaking the formation.
+| State | Purpose |
+| --- | --- |
+| Follow Formation | Move toward the assigned formation slot. |
+| Rejoin Squad | Return to formation after drifting too far or using a relaxed slot. |
+| Low Health Fallback | Move a wounded agent away from danger. |
+| Support Low Health Ally | Hold position and face the enemy while an ally is unsafe. |
+| Patrol | Used by the patrol enemy test actor. |
 
-### Formation Switching
+### Stuck Recovery
 
-The squad can switch formations depending on the environment. For example, a wedge formation can be useful in open areas, while a column formation can work better in corridors.
+The prototype detects a stuck agent by checking whether the agent is still far from its assigned slot while making very little movement progress. When this happens, the agent temporarily receives a relaxed slot near its original formation position. After reaching that relaxed slot or making progress again, the agent returns to its normal formation slot.
 
-### Temporary Slot Relaxation
+This keeps the formation from becoming completely rigid while still preserving the role-based offset as much as possible.
 
-If an agent cannot reach its exact slot, it can move to a nearby valid position instead. This prevents the agent from getting stuck while still keeping it close to the group.
+### Automatic Formation Adaptation
 
-### Rejoining Behavior
+The `Automatic formation` option in the ImGui panel lets the squad choose its formation based on nearby navigable space. The system samples the NavMesh around the squad target.
 
-After avoiding an obstacle, the agent should try to return to its original role slot. This helps the formation recover naturally after being disrupted.
+| Environment check | Chosen formation |
+| --- | --- |
+| Both sides are open | Wedge |
+| Left or right side is blocked | Column |
+| Sides are open but forward space is blocked | Line |
 
-### Implemented Stuck Recovery
+When automatic formation is disabled, the formation can be selected manually from the ImGui combo box.
 
-The prototype detects a stuck agent by checking whether it is still far from its target slot while making very little movement progress for a short amount of time. When this happens, the agent temporarily uses a relaxed fallback slot closer to the squad center. Once it starts moving again or gets close enough, it can return to its normal formation slot.
+## Evaluation
 
-This does not solve every possible navigation problem, but it gives the system a measurable recovery behavior that can be discussed and tested in the paper.
+The evaluation uses the same movement scenarios in both baseline mode and role-based formation mode.
 
-## Evaluation Plan
+| Scenario | What is tested |
+| --- | --- |
+| Open area movement | Whether the squad keeps a readable shape in free space. |
+| Narrow corridor | Whether automatic adaptation switches to column. |
+| Obstacle in front | Whether automatic adaptation can switch to line. |
+| Static obstacle path | Whether agents avoid clustering and recover from disruption. |
+| Low-health ally near enemy | Whether fallback and support states activate. |
 
-The system can be evaluated using different test scenarios:
+The ImGui panel reports these runtime metrics:
 
-- Open area movement.
-- Movement through narrow corridors.
-- Movement around static obstacles.
-- Formation switching between open and narrow spaces.
-- One agent being blocked while the rest of the squad continues.
-- Recovery after the formation is disrupted.
+| Metric | Meaning |
+| --- | --- |
+| Average slot error | Average distance between each agent and its assigned target slot. |
+| Max slot error | Worst current distance between an agent and its assigned slot. |
+| Average spacing error | Difference between current agent spacing and desired formation spacing. |
+| Stuck agents | Number of agents detected as not making enough movement progress. |
+| Relaxed slots | Number of agents temporarily using a fallback slot. |
+| Settle time | Time needed for the formation to become close enough to its target slots. |
 
-For each scenario, run the test twice:
+These values make the comparison more concrete than judging the movement only by eye.
 
-1. Shared target baseline: every squad member receives the same destination.
-2. Role-based formation: each squad member receives an assigned formation slot.
+## Discussion
 
-Record the runtime metrics from the ImGui panel for both runs. The most useful values for comparison are average slot error, max slot error, average spacing error, stuck agent count, relaxed slot count, and settle time.
+The role-based formation mode gives the squad a more readable structure than the shared-target baseline. Because every agent receives a different slot, the group is less likely to collapse into a single cluster around the destination. The use of NavMesh projection also helps keep assigned slots valid inside the level.
 
-Example result table:
+The automatic formation system improves adaptability by changing the active formation when the terrain changes. A wedge is useful in open areas because it spreads the squad out. A column is better in corridors because it reduces side-by-side spacing. A line is useful when the front is blocked but side space is available.
 
-| Scenario | Mode | Avg slot error | Max slot error | Avg spacing error | Stuck agents | Relaxed slots | Notes |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
-| Open area | Shared target baseline | | | | | | Agents tend to cluster near the same point. |
-| Open area | Role-based formation | | | | | | Formation should remain readable. |
-| Obstacle path | Shared target baseline | | | | | | Watch for crowding around the obstacle. |
-| Obstacle path | Role-based formation | | | | | | Watch how many agents recover using relaxed slots. |
+The stuck recovery system helps prevent agents from permanently failing when their exact slot is difficult to reach. Instead of forcing the exact slot forever, the agent can temporarily use a nearby relaxed slot and then return to formation.
 
-Possible evaluation questions:
-
-- Does the squad keep a recognizable formation?
-- Do agents avoid blocking each other?
-- Can the squad move around obstacles without getting stuck?
-- Do agents return to formation after disruption?
-- Does the movement look believable from the player's perspective?
-- Is the system easy to expand with new formations or roles?
-
-## Suggested Paper Structure
-
-1. Introduction: explain why squad movement needs coordination instead of independent agents.
-2. Research question: use the question at the top of this README.
-3. Background: steering behaviors, leader-follower movement, formations, behavior trees, blackboards, and NavMesh.
-4. Method: describe the role-based formation system, baseline mode, behavior tree states, and stuck recovery.
-5. Implementation: explain how Unreal calculates slots, projects them to the NavMesh, and sends them to AI controllers.
-6. Evaluation: compare shared-target baseline against role-based formation using the test scenarios and metrics.
-7. Results: include screenshots, tables, and observations.
-8. Discussion: explain what improved, what failed, and what still feels unnatural.
-9. Conclusion: answer whether the system creates believable coordination and adaptability.
-
-## Current Limitations
+## Limitations
 
 - The squad manager logic currently lives in the level script instead of a reusable squad manager actor or component.
-- Formation switching is manually controlled from the debug panel; it is not yet automatically selected from corridor width or open-space detection.
-- The stuck recovery is rule-based and simple. It detects low movement progress but does not reason about the full path.
-- The enemy interaction is a test stimulus for support and fallback behavior, not a full combat system.
-- Roles currently influence formation position and support/fallback behavior, but they do not yet contain deeper tactical actions such as suppressing, flanking around cover, or coordinated attacks.
+- Automatic formation adaptation is rule-based and only samples a few NavMesh points around the squad target.
+- Stuck recovery is based on movement progress, not on full path reasoning.
+- The enemy is used as a test stimulus for support and fallback behavior, not as a complete combat system.
+- Roles mainly affect formation placement and simple support/fallback behavior. They do not yet include deeper tactical actions such as suppressing, cover usage, or coordinated flanking attacks.
 
-## Expected Conclusion
+## Conclusion
 
-Formation movement for a squad of AI agents can be implemented in Unreal Engine by combining centralized squad coordination with individual agent navigation. A squad manager can define formation structure through roles and relative slot positions, while each AI agent uses Unreal's navigation system to move toward its assigned target. Believable coordination comes from allowing agents to adapt locally, temporarily break formation when necessary, and rejoin the group once the path is clear.
+Formation movement for a squad of AI agents can be implemented in Unreal Engine by combining centralized squad coordination with individual navigation. The prototype shows that assigning role-based formation slots creates more readable group movement than sending every agent to the same target.
 
-The comparison against a shared-target baseline is expected to show that role-based slot assignment produces more readable group movement and less visual clustering. The trade-off is that coordinated movement requires extra logic for blocked slots, recovery, and formation tuning.
+Believable coordination comes from allowing the squad to adapt instead of forcing a perfect shape at all times. NavMesh projection keeps slots valid, local avoidance reduces overlap, stuck recovery helps agents rejoin after disruption, and automatic formation switching allows the squad to respond to open areas, corridors, and blocked forward space.
 
-## Sources To Research
+The result is a squad system that is structured enough to look coordinated, but flexible enough to remain believable in a dynamic level.
 
-These are the main topics that should be researched further while writing the final paper:
-
-- Steering behaviors for autonomous characters.
-- Leader-follower movement.
-- Formation control in games.
-- Role-based group AI.
-- Unreal Engine AI Controllers.
-- Unreal Engine Behavior Trees and Blackboards.
-- Unreal Engine Navigation Mesh.
-- Environmental Query System for finding valid positions.
-
-Recommended references to include in the final paper:
+## References
 
 - Craig Reynolds, steering behaviors for autonomous characters.
 - Ian Millington and John Funge, *Artificial Intelligence for Games*.

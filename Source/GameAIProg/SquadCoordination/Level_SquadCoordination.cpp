@@ -96,6 +96,7 @@ void ALevel_SquadCoordination::Tick(float DeltaTime)
 	// Recalculate targets every frame so formation spacing/debug changes in the
 	// UI immediately affect the squad without needing another click.
 	TimeSinceTargetSet += DeltaTime;
+	UpdateAutomaticFormation();
 	UpdateSquadTargets(DeltaTime);
 
 	if (bDrawDebug)
@@ -504,7 +505,47 @@ void ALevel_SquadCoordination::SetSquadTargetFromMouse()
 	LastSettleTime = 0.f;
 	bHasSettledForTarget = false;
 	ResearchMetrics.bFormationSettled = false;
+	UpdateAutomaticFormation();
 	UpdateSquadTargets(0.f);
+}
+
+void ALevel_SquadCoordination::UpdateAutomaticFormation()
+{
+	if (!bUseAutomaticFormation || CoordinationMode == ESquadCoordinationMode::SharedTargetBaseline)
+	{
+		return;
+	}
+
+	const FVector2D Center = MouseTarget.Position;
+	const FVector2D Forward = GetFormationForward();
+	const FVector2D Right = GetFormationRight();
+
+	const bool bLeftOpen = IsNavigationSpaceAvailable(Center - Right * AutoFormationSideProbeDistance, AutoFormationProbeRadius);
+	const bool bRightOpen = IsNavigationSpaceAvailable(Center + Right * AutoFormationSideProbeDistance, AutoFormationProbeRadius);
+	const bool bForwardOpen = IsNavigationSpaceAvailable(Center + Forward * AutoFormationForwardProbeDistance, AutoFormationProbeRadius);
+
+	ESquadFormation DesiredFormation = ESquadFormation::Wedge;
+	if (!bLeftOpen || !bRightOpen)
+	{
+		DesiredFormation = ESquadFormation::Column;
+	}
+	else if (!bForwardOpen)
+	{
+		DesiredFormation = ESquadFormation::Line;
+	}
+
+	if (SquadFormation != DesiredFormation)
+	{
+		SquadFormation = DesiredFormation;
+		TimeSinceTargetSet = 0.f;
+		LastSettleTime = 0.f;
+		bHasSettledForTarget = false;
+		for (FSquadAgent& SquadAgent : SquadAgents)
+		{
+			SquadAgent.StuckTimer = 0.f;
+			SquadAgent.bUsingRelaxedSlot = false;
+		}
+	}
 }
 
 void ALevel_SquadCoordination::RebuildPatrolRoute()
@@ -895,6 +936,10 @@ void ALevel_SquadCoordination::UpdateImGui()
 	ImGui::SliderFloat("Settled slot error", &SettledSlotError, 25.f, 300.f, "%.1f");
 	ImGui::SliderFloat("Stuck progress distance", &StuckProgressDistance, 1.f, 80.f, "%.1f");
 	ImGui::SliderFloat("Stuck time threshold", &StuckTimeThreshold, 0.25f, 5.f, "%.2f");
+	ImGui::Checkbox("Automatic formation", &bUseAutomaticFormation);
+	ImGui::SliderFloat("Auto side probe distance", &AutoFormationSideProbeDistance, 150.f, 900.f, "%.1f");
+	ImGui::SliderFloat("Auto forward probe distance", &AutoFormationForwardProbeDistance, 150.f, 1100.f, "%.1f");
+	ImGui::SliderFloat("Auto probe radius", &AutoFormationProbeRadius, 20.f, 180.f, "%.1f");
 	const char* RoleLabels[] = {"Leader", "Left Flank", "Right Flank", "Rear Support"};
 	int NewAgentRoleIndex = static_cast<int>(NewAgentRole);
 	if (ImGui::Combo("New agent role", &NewAgentRoleIndex, RoleLabels, IM_ARRAYSIZE(RoleLabels)))
@@ -971,12 +1016,20 @@ void ALevel_SquadCoordination::UpdateImGui()
 
 	const char* FormationLabels[] = {"Wedge", "Column", "Line"};
 	int CurrentFormation = static_cast<int>(SquadFormation);
+	if (bUseAutomaticFormation)
+	{
+		ImGui::BeginDisabled();
+	}
 	if (ImGui::Combo("Formation", &CurrentFormation, FormationLabels, IM_ARRAYSIZE(FormationLabels)))
 	{
 		SquadFormation = static_cast<ESquadFormation>(CurrentFormation);
 		TimeSinceTargetSet = 0.f;
 		LastSettleTime = 0.f;
 		bHasSettledForTarget = false;
+	}
+	if (bUseAutomaticFormation)
+	{
+		ImGui::EndDisabled();
 	}
 
 	for (int32 AgentIndex = 0; AgentIndex < SquadAgents.Num(); ++AgentIndex)
@@ -1108,18 +1161,26 @@ FVector2D ALevel_SquadCoordination::GetDesiredSlotForAgent(int32 AgentIndex) con
 
 FVector2D ALevel_SquadCoordination::RotateFormationOffset(const FVector2D& LocalOffset) const
 {
+	const FVector2D Forward = GetFormationForward();
+	const FVector2D Right = GetFormationRight();
+	return Forward * LocalOffset.X + Right * LocalOffset.Y;
+}
+
+FVector2D ALevel_SquadCoordination::GetFormationForward() const
+{
 	float FormationYawRadians = 0.f;
 	if (!SquadAgents.IsEmpty() && IsValid(SquadAgents[0].Agent))
 	{
 		FormationYawRadians = FMath::DegreesToRadians(SquadAgents[0].Agent->GetActorRotation().Yaw);
 	}
 
-	const float CosYaw = FMath::Cos(FormationYawRadians);
-	const float SinYaw = FMath::Sin(FormationYawRadians);
-	return FVector2D{
-		LocalOffset.X * CosYaw - LocalOffset.Y * SinYaw,
-		LocalOffset.X * SinYaw + LocalOffset.Y * CosYaw
-	};
+	return FVector2D{FMath::Cos(FormationYawRadians), FMath::Sin(FormationYawRadians)};
+}
+
+FVector2D ALevel_SquadCoordination::GetFormationRight() const
+{
+	const FVector2D Forward = GetFormationForward();
+	return FVector2D{-Forward.Y, Forward.X};
 }
 
 FVector2D ALevel_SquadCoordination::GetWedgeFormationOffsetForRole(ESquadRoles SquadRole, int32 RoleOccurrenceIndex) const
@@ -1168,6 +1229,24 @@ bool ALevel_SquadCoordination::TryGetValidNavSlot(const FVector2D& DesiredSlot, 
 			OutValidSlot = FVector2D{ProjectedLocation.Location.X, ProjectedLocation.Location.Y};
 			return true;
 		}
+	}
+
+	return false;
+}
+
+bool ALevel_SquadCoordination::IsNavigationSpaceAvailable(const FVector2D& TestPoint, float ProbeRadius) const
+{
+	const FVector DesiredLocation{TestPoint.X, TestPoint.Y, SpawnZ};
+	FNavLocation ProjectedLocation{};
+	const FVector QueryExtent{
+		FMath::Max(1.f, ProbeRadius),
+		FMath::Max(1.f, ProbeRadius),
+		300.f
+	};
+
+	if (const UNavigationSystemV1* NavSystem = UNavigationSystemV1::GetCurrent(GetWorld()))
+	{
+		return NavSystem->ProjectPointToNavigation(DesiredLocation, ProjectedLocation, QueryExtent);
 	}
 
 	return false;

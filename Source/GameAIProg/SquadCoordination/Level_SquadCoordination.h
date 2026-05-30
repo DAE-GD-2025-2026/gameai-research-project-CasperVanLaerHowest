@@ -107,6 +107,18 @@ private:
 	UPROPERTY(EditAnywhere, Category="SquadCoordination|Setup")
 	ESquadFormation SquadFormation{ESquadFormation::Wedge};
 
+	UPROPERTY(EditAnywhere, Category="SquadCoordination|Setup")
+	bool bUseAutomaticFormation{false};
+
+	UPROPERTY(EditAnywhere, Category="SquadCoordination|Setup")
+	float AutoFormationSideProbeDistance{420.f};
+
+	UPROPERTY(EditAnywhere, Category="SquadCoordination|Setup")
+	float AutoFormationForwardProbeDistance{520.f};
+
+	UPROPERTY(EditAnywhere, Category="SquadCoordination|Setup")
+	float AutoFormationProbeRadius{70.f};
+
 	UPROPERTY(EditAnywhere, Category="SquadCoordination|Research")
 	ESquadCoordinationMode CoordinationMode{ESquadCoordinationMode::RoleBasedFormation};
 
@@ -175,6 +187,7 @@ private:
 	void RemoveAgentFromSquad();
 	void SpawnPatrolEnemy(const FVector& SpawnCenter);
 	void SetSquadTargetFromMouse();
+	void UpdateAutomaticFormation();
 	void UpdateSquadTargets(float DeltaTime);
 	void UpdateResearchMetrics(const TArray<FVector2D>& AssignedSlots);
 	void RebuildPatrolRoute();
@@ -191,7 +204,10 @@ private:
 	FVector2D GetFormationOffset(int32 AgentIndex) const;
 	FVector2D GetDesiredSlotForAgent(int32 AgentIndex) const;
 	FVector2D RotateFormationOffset(const FVector2D& LocalOffset) const;
+	FVector2D GetFormationForward() const;
+	FVector2D GetFormationRight() const;
 	FVector2D GetWedgeFormationOffsetForRole(ESquadRoles SquadRole, int32 RoleOccurrenceIndex) const;
 	
+	bool IsNavigationSpaceAvailable(const FVector2D& TestPoint, float ProbeRadius) const;
 	bool TryGetValidNavSlot(const FVector2D& DesiredSlot, FVector2D& OutValidSlot) const;
 };
