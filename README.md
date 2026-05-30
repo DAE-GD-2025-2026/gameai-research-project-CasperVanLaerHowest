@@ -184,6 +184,6 @@ The result is a squad system that is structured enough to look coordinated, but 
 ## References
 
 - Craig Reynolds, [Steering Behaviors For Autonomous Characters](https://www.red3d.com/cwr/steer/).
-- Ian Millington and John Funge, [*Artificial Intelligence for Games*](https://www.routledge.com/Artificial-Intelligence-for-Games/Millington-Funge/p/book/9780123747310).
-- Mat Buckland, [*Programming Game AI by Example*](https://www.jblearning.com/catalog/productdetails/9781556220784).
+- Ian Millington and John Funge, [*Artificial Intelligence for Games*](https://www.amazon.com/dp/0123747317).
+- Mat Buckland, [*Programming Game AI by Example*](https://www.amazon.com/dp/1556220782).
 - Unreal Engine documentation: [AI Controllers](https://dev.epicgames.com/documentation/en-us/unreal-engine/ai-controllers-in-unreal-engine), [Behavior Trees](https://dev.epicgames.com/documentation/en-us/unreal-engine/behavior-trees-in-unreal-engine), [Blackboard](https://dev.epicgames.com/documentation/en-us/unreal-engine/behavior-tree-in-unreal-engine---user-guide#editingablackboard), and [Navigation Mesh](https://dev.epicgames.com/documentation/en-us/unreal-engine/navigation-mesh-in-unreal-engine).
