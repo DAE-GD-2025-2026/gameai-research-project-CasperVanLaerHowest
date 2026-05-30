@@ -8,6 +8,8 @@ How can formation movement be implemented for a squad of AI agents in Unreal Eng
 
 This project researches and prototypes a squad coordination AI system in Unreal Engine. The system focuses on dynamic formation movement, role-based positioning, obstacle adaptation, and believable group behavior for AI-controlled agents.
 
+The prototype also includes a research comparison mode. The squad can be switched between a coordinated role-based formation and a simple shared-target baseline where every agent receives the same destination. This makes it possible to compare coordinated movement against a naive group movement approach inside the same level.
+
 ## Abstract
 
 In many games, AI agents are often controlled as individual characters. However, squad-based enemies or companions need to move as a coordinated group to appear believable to the player. This research investigates how formation movement can be implemented in Unreal Engine by combining a squad-level coordination system with individual AI navigation.
@@ -78,6 +80,36 @@ Possible responsibilities:
 - Detect when the assigned slot cannot be reached.
 - Rejoin the formation after avoiding an obstacle.
 
+## Implemented Prototype
+
+The Unreal Engine prototype is implemented in `Source/GameAIProg/SquadCoordination/Level_SquadCoordination.cpp`. The current version includes:
+
+- Role-based squad members: leader, left flank, right flank, and rear support.
+- Formation layouts: wedge, column, and line.
+- A shared squad target set by mouse input.
+- Per-agent formation slots calculated from the squad target and active formation.
+- NavMesh projection for formation slots so agents receive reachable movement targets when possible.
+- A baseline comparison mode where all agents move to the same target instead of using formation slots.
+- Local avoidance through an avoidance-aware arrive steering behavior.
+- Behavior tree states for formation following, rejoining, low-health fallback, ally support, and patrol behavior.
+- A patrol enemy used to test low-health fallback and support behavior.
+- Runtime research metrics shown in the ImGui panel.
+
+### Runtime Research Metrics
+
+The debug panel reports values that can be used in the paper:
+
+| Metric | Meaning |
+| --- | --- |
+| Average slot error | Average distance between each agent and its assigned target slot. |
+| Max slot error | Worst current distance between an agent and its assigned slot. |
+| Average spacing error | How far the current distances between agents differ from the desired formation distances. |
+| Stuck agents | Number of agents that are no longer making enough progress toward their assigned slot. |
+| Relaxed slots | Number of agents temporarily using a fallback slot after being detected as stuck. |
+| Settle time | Approximate time after a new target before the formation is considered close enough to its slots. |
+
+These metrics are intended for comparison between the role-based formation mode and the shared-target baseline.
+
 ## Formation Slot Example
 
 Formation slots can be stored as local offsets from the leader or formation center.
@@ -134,6 +166,12 @@ If an agent cannot reach its exact slot, it can move to a nearby valid position 
 
 After avoiding an obstacle, the agent should try to return to its original role slot. This helps the formation recover naturally after being disrupted.
 
+### Implemented Stuck Recovery
+
+The prototype detects a stuck agent by checking whether it is still far from its target slot while making very little movement progress for a short amount of time. When this happens, the agent temporarily uses a relaxed fallback slot closer to the squad center. Once it starts moving again or gets close enough, it can return to its normal formation slot.
+
+This does not solve every possible navigation problem, but it gives the system a measurable recovery behavior that can be discussed and tested in the paper.
+
 ## Evaluation Plan
 
 The system can be evaluated using different test scenarios:
@@ -145,6 +183,22 @@ The system can be evaluated using different test scenarios:
 - One agent being blocked while the rest of the squad continues.
 - Recovery after the formation is disrupted.
 
+For each scenario, run the test twice:
+
+1. Shared target baseline: every squad member receives the same destination.
+2. Role-based formation: each squad member receives an assigned formation slot.
+
+Record the runtime metrics from the ImGui panel for both runs. The most useful values for comparison are average slot error, max slot error, average spacing error, stuck agent count, relaxed slot count, and settle time.
+
+Example result table:
+
+| Scenario | Mode | Avg slot error | Max slot error | Avg spacing error | Stuck agents | Relaxed slots | Notes |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | --- |
+| Open area | Shared target baseline | | | | | | Agents tend to cluster near the same point. |
+| Open area | Role-based formation | | | | | | Formation should remain readable. |
+| Obstacle path | Shared target baseline | | | | | | Watch for crowding around the obstacle. |
+| Obstacle path | Role-based formation | | | | | | Watch how many agents recover using relaxed slots. |
+
 Possible evaluation questions:
 
 - Does the squad keep a recognizable formation?
@@ -154,9 +208,31 @@ Possible evaluation questions:
 - Does the movement look believable from the player's perspective?
 - Is the system easy to expand with new formations or roles?
 
+## Suggested Paper Structure
+
+1. Introduction: explain why squad movement needs coordination instead of independent agents.
+2. Research question: use the question at the top of this README.
+3. Background: steering behaviors, leader-follower movement, formations, behavior trees, blackboards, and NavMesh.
+4. Method: describe the role-based formation system, baseline mode, behavior tree states, and stuck recovery.
+5. Implementation: explain how Unreal calculates slots, projects them to the NavMesh, and sends them to AI controllers.
+6. Evaluation: compare shared-target baseline against role-based formation using the test scenarios and metrics.
+7. Results: include screenshots, tables, and observations.
+8. Discussion: explain what improved, what failed, and what still feels unnatural.
+9. Conclusion: answer whether the system creates believable coordination and adaptability.
+
+## Current Limitations
+
+- The squad manager logic currently lives in the level script instead of a reusable squad manager actor or component.
+- Formation switching is manually controlled from the debug panel; it is not yet automatically selected from corridor width or open-space detection.
+- The stuck recovery is rule-based and simple. It detects low movement progress but does not reason about the full path.
+- The enemy interaction is a test stimulus for support and fallback behavior, not a full combat system.
+- Roles currently influence formation position and support/fallback behavior, but they do not yet contain deeper tactical actions such as suppressing, flanking around cover, or coordinated attacks.
+
 ## Expected Conclusion
 
 Formation movement for a squad of AI agents can be implemented in Unreal Engine by combining centralized squad coordination with individual agent navigation. A squad manager can define formation structure through roles and relative slot positions, while each AI agent uses Unreal's navigation system to move toward its assigned target. Believable coordination comes from allowing agents to adapt locally, temporarily break formation when necessary, and rejoin the group once the path is clear.
+
+The comparison against a shared-target baseline is expected to show that role-based slot assignment produces more readable group movement and less visual clustering. The trade-off is that coordinated movement requires extra logic for blocked slots, recovery, and formation tuning.
 
 ## Sources To Research
 
@@ -171,3 +247,9 @@ These are the main topics that should be researched further while writing the fi
 - Unreal Engine Navigation Mesh.
 - Environmental Query System for finding valid positions.
 
+Recommended references to include in the final paper:
+
+- Craig Reynolds, steering behaviors for autonomous characters.
+- Ian Millington and John Funge, *Artificial Intelligence for Games*.
+- Mat Buckland, *Programming Game AI by Example*.
+- Unreal Engine documentation for AIController, Behavior Trees, Blackboards, and Navigation Mesh.

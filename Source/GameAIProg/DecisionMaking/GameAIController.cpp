@@ -69,6 +69,27 @@ namespace
 		EnsureKey<UBlackboardKeyType_Float>(BlackboardData, TEXT("SearchStartTime"));
 		EnsureKey<UBlackboardKeyType_Bool>(BlackboardData, TEXT("SearchReachedLastKnownLocation"));
 	}
+
+	void EnsureSquadBlackboardKeys(UBlackboardData& BlackboardData)
+	{
+		EnsureObjectKey(BlackboardData, TEXT("SquadLeader"), AActor::StaticClass());
+		EnsureObjectKey(BlackboardData, TEXT("LowHealthAlly"), AActor::StaticClass());
+		EnsureKey<UBlackboardKeyType_Vector>(BlackboardData, TEXT("SquadSlotLocation"));
+		EnsureKey<UBlackboardKeyType_Vector>(BlackboardData, TEXT("SafeLocation"));
+		EnsureKey<UBlackboardKeyType_Vector>(BlackboardData, TEXT("PatrolLocation"));
+		EnsureKey<UBlackboardKeyType_Float>(BlackboardData, TEXT("Health"));
+		EnsureKey<UBlackboardKeyType_Float>(BlackboardData, TEXT("LowHealthThreshold"));
+		EnsureKey<UBlackboardKeyType_Float>(BlackboardData, TEXT("DistanceToSlot"));
+		EnsureKey<UBlackboardKeyType_Float>(BlackboardData, TEXT("FormationRole"));
+		EnsureKey<UBlackboardKeyType_Float>(BlackboardData, TEXT("AgentState"));
+		EnsureKey<UBlackboardKeyType_Bool>(BlackboardData, TEXT("IsLowHealth"));
+		EnsureKey<UBlackboardKeyType_Bool>(BlackboardData, TEXT("IsEnemyInRange"));
+		EnsureKey<UBlackboardKeyType_Bool>(BlackboardData, TEXT("IsUnsafeFromEnemy"));
+		EnsureKey<UBlackboardKeyType_Bool>(BlackboardData, TEXT("IsLowHealthAllyUnsafe"));
+		EnsureKey<UBlackboardKeyType_Bool>(BlackboardData, TEXT("HasLowHealthAlly"));
+		EnsureKey<UBlackboardKeyType_Bool>(BlackboardData, TEXT("IsTooFarFromFormation"));
+		EnsureKey<UBlackboardKeyType_Bool>(BlackboardData, TEXT("IsPatrolOnly"));
+	}
 }
 
 
@@ -120,6 +141,7 @@ void AGameAIController::InitFiniteStateMachine()
 	}
 
 	EnsureFSMBlackboardKeys(*FSMBlackboardAsset);
+	EnsureSquadBlackboardKeys(*FSMBlackboardAsset);
 
 	UBlackboardComponent* BlackboardComp = Blackboard;
 	if (!UseBlackboard(FSMBlackboardAsset, BlackboardComp))
@@ -142,6 +164,7 @@ void AGameAIController::InitBehaviorTree()
 	}
 
 	EnsureFSMBlackboardKeys(*BehaviorTreeBlackboardAsset);
+	EnsureSquadBlackboardKeys(*BehaviorTreeBlackboardAsset);
 
 	UBlackboardComponent* BlackboardComp = Blackboard;
 	if (!UseBlackboard(BehaviorTreeBlackboardAsset, BlackboardComp))

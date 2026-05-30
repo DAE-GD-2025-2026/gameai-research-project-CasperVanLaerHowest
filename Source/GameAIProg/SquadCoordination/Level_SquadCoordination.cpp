@@ -2,11 +2,50 @@
 
 #include "Level_SquadCoordination.h"
 
+#include <memory>
+
 #include "AIController.h"
+#include "BehaviorTree/BlackboardComponent.h"
+#include "DecisionMaking/BehaviorTree/BT.h"
+#include "DecisionMaking/BehaviorTree/GameAIBehaviorTreeComponent.h"
+#include "DecisionMaking/GameAIController.h"
 #include "NavigationSystem.h"
 #include "DrawDebugHelpers.h"
 #include "InputCoreTypes.h"
 #include "imgui.h"
+
+namespace
+{
+	ESquadAgentState GetStateFromBlackboard(UBlackboardComponent* Blackboard)
+	{
+		if (!Blackboard)
+		{
+			return ESquadAgentState::FollowFormation;
+		}
+
+		const int32 StateValue = FMath::RoundToInt(Blackboard->GetValueAsFloat(TEXT("AgentState")));
+		if (StateValue < static_cast<int32>(ESquadAgentState::FollowFormation)
+			|| StateValue > static_cast<int32>(ESquadAgentState::Patrol))
+		{
+			return ESquadAgentState::FollowFormation;
+		}
+
+		return static_cast<ESquadAgentState>(StateValue);
+	}
+
+	const char* GetCoordinationModeLabel(const ESquadCoordinationMode Mode)
+	{
+		switch (Mode)
+		{
+		case ESquadCoordinationMode::RoleBasedFormation:
+			return "Role-based formation";
+		case ESquadCoordinationMode::SharedTargetBaseline:
+			return "Shared target baseline";
+		default:
+			return "Unknown";
+		}
+	}
+}
 
 ALevel_SquadCoordination::ALevel_SquadCoordination()
 {
@@ -32,7 +71,8 @@ void ALevel_SquadCoordination::BeginPlay()
 	const FVector SpawnCenter = GetNavMeshBoundsCenter(SpawnZ).value_or(FVector{0.f, 0.f, SpawnZ});
 	MouseTarget.Position = FVector2D{SpawnCenter};
 	SpawnSquad(SpawnCenter);
-	UpdateSquadTargets();
+	SpawnPatrolEnemy(SpawnCenter + FVector{900.f, 900.f, 0.f});
+	UpdateSquadTargets(0.f);
 }
 
 void ALevel_SquadCoordination::Tick(float DeltaTime)
@@ -55,7 +95,8 @@ void ALevel_SquadCoordination::Tick(float DeltaTime)
 
 	// Recalculate targets every frame so formation spacing/debug changes in the
 	// UI immediately affect the squad without needing another click.
-	UpdateSquadTargets();
+	TimeSinceTargetSet += DeltaTime;
+	UpdateSquadTargets(DeltaTime);
 
 	if (bDrawDebug)
 	{
@@ -164,6 +205,13 @@ void ALevel_SquadCoordination::AddAgentToSquad(const FVector& SpawnCenter, ESqua
 		return;
 	}
 
+	if (AController* ExistingController = Agent->GetController();
+		ExistingController && !ExistingController->IsA(AGameAIController::StaticClass()))
+	{
+		ExistingController->UnPossess();
+		ExistingController->Destroy();
+	}
+	Agent->AIControllerClass = AGameAIController::StaticClass();
 	Agent->SpawnDefaultController();
 	Agent->SetDebugRenderingEnabled(bDrawDebug);
 
@@ -177,11 +225,15 @@ void ALevel_SquadCoordination::AddAgentToSquad(const FVector& SpawnCenter, ESqua
 	FSquadAgent SquadAgent{};
 	SquadAgent.Agent = Agent;
 	SquadAgent.Role = AgentRole;
+	SquadAgent.Health = AgentRole == ESquadRoles::RearSupport ? 25.f : 100.f;
+	SquadAgent.LastPosition = Agent->GetPosition();
+	SquadAgent.AssignedSlot = FVector2D{SpawnLocation};
 	SquadAgents.Add(SquadAgent);
 	ArriveBehaviors.emplace_back(std::move(ArriveBehavior));
 	SquadSize = SquadAgents.Num();
 
-	UpdateSquadTargets();
+	InitSquadBehaviorTree(SquadAgents.Last());
+	UpdateSquadTargets(0.f);
 }
 
 void ALevel_SquadCoordination::RemoveAgentFromSquad()
@@ -207,7 +259,233 @@ void ALevel_SquadCoordination::RemoveAgentFromSquad()
 	}
 
 	SquadSize = SquadAgents.Num();
-	UpdateSquadTargets();
+	UpdateSquadTargets(0.f);
+}
+
+void ALevel_SquadCoordination::SpawnPatrolEnemy(const FVector& SpawnCenter)
+{
+	PatrolEnemy = GetWorld()->SpawnActor<ASteeringAgent>(
+		SteeringAgentClass,
+		SpawnCenter,
+		FRotator::ZeroRotator);
+
+	if (!IsValid(PatrolEnemy))
+	{
+		UE_LOG(LogTemp, Error, TEXT("SquadCoordination: Failed to spawn patrol enemy."));
+		return;
+	}
+
+	if (AController* ExistingController = PatrolEnemy->GetController();
+		ExistingController && !ExistingController->IsA(AGameAIController::StaticClass()))
+	{
+		ExistingController->UnPossess();
+		ExistingController->Destroy();
+	}
+	PatrolEnemy->AIControllerClass = AGameAIController::StaticClass();
+	PatrolEnemy->SpawnDefaultController();
+	PatrolEnemy->SetDebugRenderingEnabled(bDrawDebug);
+	PatrolEnemy->SetActorLocation(PatrolEnemy->GetActorLocation() + PatrolRouteOffset);
+	InitPatrolBehaviorTree(*PatrolEnemy);
+}
+
+void ALevel_SquadCoordination::InitSquadBehaviorTree(FSquadAgent& SquadAgent)
+{
+	AGameAIController* AIController = SquadAgent.Agent ? Cast<AGameAIController>(SquadAgent.Agent->GetController()) : nullptr;
+	UGameAIBehaviorTreeComponent* BehaviorTreeComp = AIController ? AIController->FindComponentByClass<UGameAIBehaviorTreeComponent>() : nullptr;
+	UBlackboardComponent* Blackboard = AIController ? AIController->GetBlackboardComponent() : nullptr;
+	if (!AIController || !BehaviorTreeComp || !Blackboard)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SquadCoordination: Could not initialize squad behavior tree."));
+		return;
+	}
+
+	Blackboard->SetValueAsFloat(TEXT("Health"), SquadAgent.Health);
+	Blackboard->SetValueAsFloat(TEXT("LowHealthThreshold"), SquadAgent.LowHealthThreshold);
+	Blackboard->SetValueAsBool(TEXT("IsPatrolOnly"), false);
+
+	auto MoveToBlackboardVector = [this](AAIController& Controller, const FName KeyName, ESquadAgentState State, float AcceptanceRadius)
+	{
+		UBlackboardComponent* BlackboardComp = Controller.GetBlackboardComponent();
+		if (!BlackboardComp)
+		{
+			return GameAI::BT::ENodeResult::Failed;
+		}
+
+		BlackboardComp->SetValueAsFloat(TEXT("AgentState"), static_cast<float>(State));
+		const FVector TargetLocation = BlackboardComp->GetValueAsVector(KeyName);
+		Controller.MoveToLocation(
+			TargetLocation,
+			AcceptanceRadius,
+			true,
+			true,
+			true,
+			false);
+		return GameAI::BT::ENodeResult::Running;
+	};
+
+	auto Tree = std::make_unique<GameAI::BT::BehaviorTree>();
+	auto Root = std::make_unique<GameAI::BT::Selector>("Squad State Selector");
+
+	auto LowHealthSequence = std::make_unique<GameAI::BT::Sequence>("Low Health -> Fall Back");
+	LowHealthSequence->AddChild(std::make_unique<GameAI::BT::Action>("Enemy In Range",
+		[](AAIController& Controller, float)
+		{
+			UBlackboardComponent* BlackboardComp = Controller.GetBlackboardComponent();
+			return BlackboardComp && BlackboardComp->GetValueAsBool(TEXT("IsEnemyInRange"))
+				? GameAI::BT::ENodeResult::Succeeded
+				: GameAI::BT::ENodeResult::Failed;
+		}));
+	LowHealthSequence->AddChild(std::make_unique<GameAI::BT::Action>("Is Low Health",
+		[](AAIController& Controller, float)
+		{
+			UBlackboardComponent* BlackboardComp = Controller.GetBlackboardComponent();
+			return BlackboardComp && BlackboardComp->GetValueAsBool(TEXT("IsLowHealth"))
+				? GameAI::BT::ENodeResult::Succeeded
+				: GameAI::BT::ENodeResult::Failed;
+		}));
+	LowHealthSequence->AddChild(std::make_unique<GameAI::BT::Action>("Still Unsafe",
+		[](AAIController& Controller, float)
+		{
+			UBlackboardComponent* BlackboardComp = Controller.GetBlackboardComponent();
+			return BlackboardComp && BlackboardComp->GetValueAsBool(TEXT("IsUnsafeFromEnemy"))
+				? GameAI::BT::ENodeResult::Succeeded
+				: GameAI::BT::ENodeResult::Failed;
+		}));
+	LowHealthSequence->AddChild(std::make_unique<GameAI::BT::Action>("Fallback To Safe Location",
+		[MoveToBlackboardVector](AAIController& Controller, float)
+		{
+			return MoveToBlackboardVector(Controller, TEXT("SafeLocation"), ESquadAgentState::LowHealthFallback, 80.f);
+		}));
+	Root->AddChild(std::move(LowHealthSequence));
+
+	auto SupportSequence = std::make_unique<GameAI::BT::Sequence>("Ally Low Health -> Support");
+	SupportSequence->AddChild(std::make_unique<GameAI::BT::Action>("Enemy In Range",
+		[](AAIController& Controller, float)
+		{
+			UBlackboardComponent* BlackboardComp = Controller.GetBlackboardComponent();
+			return BlackboardComp && BlackboardComp->GetValueAsBool(TEXT("IsEnemyInRange"))
+				? GameAI::BT::ENodeResult::Succeeded
+				: GameAI::BT::ENodeResult::Failed;
+		}));
+	SupportSequence->AddChild(std::make_unique<GameAI::BT::Action>("Has Low Health Ally",
+		[](AAIController& Controller, float)
+		{
+			UBlackboardComponent* BlackboardComp = Controller.GetBlackboardComponent();
+			return BlackboardComp && BlackboardComp->GetValueAsBool(TEXT("HasLowHealthAlly"))
+				? GameAI::BT::ENodeResult::Succeeded
+				: GameAI::BT::ENodeResult::Failed;
+		}));
+	SupportSequence->AddChild(std::make_unique<GameAI::BT::Action>("Low Health Ally Still Unsafe",
+		[](AAIController& Controller, float)
+		{
+			UBlackboardComponent* BlackboardComp = Controller.GetBlackboardComponent();
+			return BlackboardComp && BlackboardComp->GetValueAsBool(TEXT("IsLowHealthAllyUnsafe"))
+				? GameAI::BT::ENodeResult::Succeeded
+				: GameAI::BT::ENodeResult::Failed;
+		}));
+	SupportSequence->AddChild(std::make_unique<GameAI::BT::Action>("Hold And Attack Enemy",
+		[this](AAIController& Controller, float)
+		{
+			UBlackboardComponent* BlackboardComp = Controller.GetBlackboardComponent();
+			ASteeringAgent* Agent = Cast<ASteeringAgent>(Controller.GetPawn());
+			if (!BlackboardComp || !IsValid(Agent) || !IsValid(PatrolEnemy))
+			{
+				return GameAI::BT::ENodeResult::Failed;
+			}
+
+			BlackboardComp->SetValueAsFloat(TEXT("AgentState"), static_cast<float>(ESquadAgentState::SupportLowHealthAlly));
+			Controller.StopMovement();
+			const FVector ToEnemy = PatrolEnemy->GetActorLocation() - Agent->GetActorLocation();
+			if (!ToEnemy.IsNearlyZero())
+			{
+				Agent->SetActorRotation(ToEnemy.Rotation());
+			}
+			return GameAI::BT::ENodeResult::Running;
+		}));
+	Root->AddChild(std::move(SupportSequence));
+
+	auto RejoinSequence = std::make_unique<GameAI::BT::Sequence>("Too Far -> Rejoin Squad");
+	RejoinSequence->AddChild(std::make_unique<GameAI::BT::Action>("Is Too Far From Formation",
+		[](AAIController& Controller, float)
+		{
+			UBlackboardComponent* BlackboardComp = Controller.GetBlackboardComponent();
+			return BlackboardComp && BlackboardComp->GetValueAsBool(TEXT("IsTooFarFromFormation"))
+				? GameAI::BT::ENodeResult::Succeeded
+				: GameAI::BT::ENodeResult::Failed;
+		}));
+	RejoinSequence->AddChild(std::make_unique<GameAI::BT::Action>("Rejoin Formation Slot",
+		[MoveToBlackboardVector, this](AAIController& Controller, float)
+		{
+			return MoveToBlackboardVector(Controller, TEXT("SquadSlotLocation"), ESquadAgentState::RejoinSquad, ArriveStopRadius);
+		}));
+	Root->AddChild(std::move(RejoinSequence));
+
+	Root->AddChild(std::make_unique<GameAI::BT::Action>("Follow Formation",
+		[MoveToBlackboardVector, this](AAIController& Controller, float)
+		{
+			return MoveToBlackboardVector(Controller, TEXT("SquadSlotLocation"), ESquadAgentState::FollowFormation, ArriveStopRadius);
+		}));
+
+	Tree->SetRoot(std::move(Root));
+	BehaviorTreeComp->SetTree(std::move(Tree));
+	AIController->RunBehaviorTreeLogic();
+}
+
+void ALevel_SquadCoordination::InitPatrolBehaviorTree(ASteeringAgent& Agent)
+{
+	AGameAIController* AIController = Cast<AGameAIController>(Agent.GetController());
+	UGameAIBehaviorTreeComponent* BehaviorTreeComp = AIController ? AIController->FindComponentByClass<UGameAIBehaviorTreeComponent>() : nullptr;
+	UBlackboardComponent* Blackboard = AIController ? AIController->GetBlackboardComponent() : nullptr;
+	if (!AIController || !BehaviorTreeComp || !Blackboard)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SquadCoordination: Could not initialize patrol behavior tree."));
+		return;
+	}
+
+	Blackboard->SetValueAsBool(TEXT("IsPatrolOnly"), true);
+	Blackboard->SetValueAsFloat(TEXT("AgentState"), static_cast<float>(ESquadAgentState::Patrol));
+
+	if (!PatrolEnemySeek)
+	{
+		PatrolEnemySeek = std::make_unique<Seek>();
+	}
+
+	PatrolEnemyPoints.Reset();
+	PatrolEnemyPointIndex = 0;
+	RebuildPatrolRoute();
+
+	auto Tree = std::make_unique<GameAI::BT::BehaviorTree>();
+	auto Root = std::make_unique<GameAI::BT::Action>("Patrol Forever",
+		[this](AAIController& Controller, float)
+		{
+			UBlackboardComponent* BlackboardComp = Controller.GetBlackboardComponent();
+			ASteeringAgent* Agent = Cast<ASteeringAgent>(Controller.GetPawn());
+			if (!BlackboardComp || !IsValid(Agent) || !PatrolEnemySeek || PatrolEnemyPoints.IsEmpty())
+			{
+				return GameAI::BT::ENodeResult::Failed;
+			}
+
+			PatrolEnemyPointIndex = PatrolEnemyPoints.IsValidIndex(PatrolEnemyPointIndex) ? PatrolEnemyPointIndex : 0;
+			const FVector CurrentTarget = PatrolEnemyPoints[PatrolEnemyPointIndex];
+			BlackboardComp->SetValueAsVector(TEXT("PatrolLocation"), CurrentTarget);
+			BlackboardComp->SetValueAsFloat(TEXT("AgentState"), static_cast<float>(ESquadAgentState::Patrol));
+
+			const FVector2D ToPoint = FVector2D{CurrentTarget} - Agent->GetPosition();
+			const float ReachDistance = FMath::Max(Agent->GetCapsuleRadius() * 1.5f, 80.f);
+			if (ToPoint.SizeSquared() <= ReachDistance * ReachDistance)
+			{
+				PatrolEnemyPointIndex = (PatrolEnemyPointIndex + 1) % PatrolEnemyPoints.Num();
+			}
+
+			const FVector Target = PatrolEnemyPoints[PatrolEnemyPointIndex];
+			PatrolEnemySeek->SetTarget(FTargetData{FVector2D{Target}});
+			Agent->SetSteeringBehavior(PatrolEnemySeek.get());
+			return GameAI::BT::ENodeResult::Running;
+		});
+
+	Tree->SetRoot(std::move(Root));
+	BehaviorTreeComp->SetTree(std::move(Tree));
+	AIController->RunBehaviorTreeLogic();
 }
 
 void ALevel_SquadCoordination::SetSquadTargetFromMouse()
@@ -222,16 +500,57 @@ void ALevel_SquadCoordination::SetSquadTargetFromMouse()
 	// MouseTarget is the squad's center point; individual agents offset from it
 	// to form the surrounding pattern.
 	MouseTarget.Position = FVector2D{LatestMouseWorldPos};
-	UpdateSquadTargets();
+	TimeSinceTargetSet = 0.f;
+	LastSettleTime = 0.f;
+	bHasSettledForTarget = false;
+	ResearchMetrics.bFormationSettled = false;
+	UpdateSquadTargets(0.f);
 }
 
-void ALevel_SquadCoordination::UpdateSquadTargets()
+void ALevel_SquadCoordination::RebuildPatrolRoute()
+{
+	PatrolEnemyPoints.Reset();
+	PatrolEnemyPointIndex = 0;
+
+	if (!IsValid(PatrolEnemy))
+	{
+		return;
+	}
+
+	const FVector RouteCenter = PatrolEnemy->GetActorLocation();
+	const FVector PatrolOffsets[] = {
+		FVector{-520.f, -520.f, 0.f},
+		FVector{520.f, -520.f, 0.f},
+		FVector{520.f, 520.f, 0.f},
+		FVector{-520.f, 520.f, 0.f}
+	};
+
+	for (const FVector& Offset : PatrolOffsets)
+	{
+		FVector2D ProjectedPoint{};
+		const FVector DesiredPoint = RouteCenter + Offset;
+		if (TryGetValidNavSlot(FVector2D{DesiredPoint}, ProjectedPoint))
+		{
+			PatrolEnemyPoints.Add(FVector{ProjectedPoint.X, ProjectedPoint.Y, SpawnZ});
+		}
+	}
+
+	if (PatrolEnemyPoints.Num() < 2)
+	{
+		PatrolEnemyPoints.Add(RouteCenter);
+		PatrolEnemyPoints.Add(RouteCenter + FVector{450.f, 0.f, 0.f});
+	}
+}
+
+void ALevel_SquadCoordination::UpdateSquadTargets(float DeltaTime)
 {
 	// Only update pairs that exist in both arrays. This protects against failed
 	// spawns or any future change that could leave the arrays out of sync.
 	const int32 AgentCount = FMath::Min(SquadAgents.Num(), static_cast<int32>(ArriveBehaviors.size()));
 	TArray<ASteeringAgent*> ActiveAgents{};
 	ActiveAgents.Reserve(AgentCount);
+	TArray<FVector2D> AssignedSlots{};
+	AssignedSlots.Init(FVector2D::ZeroVector, AgentCount);
 	for (int32 AgentIndex = 0; AgentIndex < AgentCount; ++AgentIndex)
 	{
 		if (IsValid(SquadAgents[AgentIndex].Agent))
@@ -249,9 +568,7 @@ void ALevel_SquadCoordination::UpdateSquadTargets()
 			continue;
 		}
 
-		// Move each agent toward its own formation slot relative to the current
-		// squad target, rather than sending every agent to the exact same point.
-		const FVector2D DesiredSlot = MouseTarget.Position + GetFormationOffset(AgentIndex);
+		const FVector2D DesiredSlot = GetDesiredSlotForAgent(AgentIndex);
 		FVector2D ValidSlot{};
 		if (!TryGetValidNavSlot(DesiredSlot, ValidSlot))
 		{
@@ -270,22 +587,103 @@ void ALevel_SquadCoordination::UpdateSquadTargets()
 			}
 		}
 
-		const FVector MoveTarget{ValidSlot.X, ValidSlot.Y, SpawnZ};
-		constexpr float MoveRetargetDistanceSq = 50.f * 50.f;
-		if (!SquadAgent.bHasMoveTarget
-			|| (ValidSlot - SquadAgent.LastMoveTarget).SizeSquared() > MoveRetargetDistanceSq)
+		const FVector2D CurrentPosition = SquadAgent.Agent->GetPosition();
+		const float SlotDistance = FVector2D::Distance(CurrentPosition, ValidSlot);
+		const float AssignedSlotDistance = FVector2D::Distance(CurrentPosition, SquadAgent.AssignedSlot);
+		const float ProgressDistance = FVector2D::Distance(CurrentPosition, SquadAgent.LastPosition);
+		if (SquadAgent.bUsingRelaxedSlot && AssignedSlotDistance <= SettledSlotError)
 		{
-			if (AAIController* AIController = Cast<AAIController>(SquadAgent.Agent->GetController()))
+			SquadAgent.StuckTimer = 0.f;
+			SquadAgent.bUsingRelaxedSlot = false;
+		}
+		else if (DeltaTime > 0.f && SlotDistance > SettledSlotError && ProgressDistance < StuckProgressDistance)
+		{
+			SquadAgent.StuckTimer += DeltaTime;
+		}
+		else if (SlotDistance <= SettledSlotError || ProgressDistance >= StuckProgressDistance)
+		{
+			SquadAgent.StuckTimer = 0.f;
+			SquadAgent.bUsingRelaxedSlot = false;
+		}
+
+		SquadAgent.LastPosition = CurrentPosition;
+		if (!SquadAgent.bUsingRelaxedSlot)
+		{
+			SquadAgent.bUsingRelaxedSlot = SquadAgent.StuckTimer >= StuckTimeThreshold;
+		}
+
+		if (SquadAgent.bUsingRelaxedSlot && CoordinationMode == ESquadCoordinationMode::RoleBasedFormation)
+		{
+			FVector2D RelaxedSlot{};
+			const FVector2D FormationOffset = DesiredSlot - MouseTarget.Position;
+			const FVector2D OffsetDirection = FormationOffset.SizeSquared() > KINDA_SMALL_NUMBER
+				? FormationOffset.GetSafeNormal()
+				: FVector2D{1.f, 0.f};
+			const FVector2D RelaxedTarget = DesiredSlot + OffsetDirection * FMath::Max(AgentAvoidanceRadius, 80.f);
+
+			if (TryGetValidNavSlot(RelaxedTarget, RelaxedSlot))
 			{
-				AIController->MoveToLocation(
-					MoveTarget,
-					ArriveStopRadius,
-					true,
-					true,
-					true,
-					false);
-				SquadAgent.LastMoveTarget = ValidSlot;
-				SquadAgent.bHasMoveTarget = true;
+				ValidSlot = RelaxedSlot;
+			}
+		}
+
+		AssignedSlots[AgentIndex] = ValidSlot;
+		SquadAgent.AssignedSlot = ValidSlot;
+
+		ASteeringAgent* LowHealthAlly = nullptr;
+		for (const FSquadAgent& OtherSquadAgent : SquadAgents)
+		{
+			if (OtherSquadAgent.Agent != SquadAgent.Agent
+				&& IsValid(OtherSquadAgent.Agent)
+				&& OtherSquadAgent.Health <= OtherSquadAgent.LowHealthThreshold)
+			{
+				LowHealthAlly = OtherSquadAgent.Agent;
+				break;
+			}
+		}
+
+		FVector2D SafeSlot = MouseTarget.Position + RotateFormationOffset(FVector2D{-LowHealthFallbackDistance, 0.f});
+		TryGetValidNavSlot(SafeSlot, SafeSlot);
+
+		const bool bEnemyInRange = IsValid(PatrolEnemy)
+			&& FVector::DistSquared2D(SquadAgent.Agent->GetActorLocation(), PatrolEnemy->GetActorLocation())
+				<= FMath::Square(SupportEnemyDetectionRange);
+		const bool bUnsafeFromEnemy = IsValid(PatrolEnemy)
+			&& FVector::DistSquared2D(SquadAgent.Agent->GetActorLocation(), PatrolEnemy->GetActorLocation())
+				<= FMath::Square(WoundedSafeDistanceFromEnemy);
+		const bool bLowHealthAllyUnsafe = IsValid(PatrolEnemy)
+			&& IsValid(LowHealthAlly)
+			&& FVector::DistSquared2D(LowHealthAlly->GetActorLocation(), PatrolEnemy->GetActorLocation())
+				<= FMath::Square(WoundedSafeDistanceFromEnemy);
+
+		const FVector MoveTarget{ValidSlot.X, ValidSlot.Y, SpawnZ};
+		const FVector SafeTarget{SafeSlot.X, SafeSlot.Y, SpawnZ};
+		if (AAIController* AIController = Cast<AAIController>(SquadAgent.Agent->GetController()))
+		{
+			if (UBlackboardComponent* Blackboard = AIController->GetBlackboardComponent())
+			{
+				Blackboard->SetValueAsVector(TEXT("SquadSlotLocation"), MoveTarget);
+				Blackboard->SetValueAsVector(TEXT("SafeLocation"), SafeTarget);
+				Blackboard->SetValueAsFloat(TEXT("DistanceToSlot"), FVector2D::Distance(SquadAgent.Agent->GetPosition(), ValidSlot));
+				Blackboard->SetValueAsFloat(TEXT("FormationRole"), static_cast<float>(SquadAgent.Role));
+				Blackboard->SetValueAsFloat(TEXT("Health"), SquadAgent.Health);
+				Blackboard->SetValueAsFloat(TEXT("LowHealthThreshold"), SquadAgent.LowHealthThreshold);
+				Blackboard->SetValueAsBool(TEXT("IsLowHealth"), SquadAgent.Health <= SquadAgent.LowHealthThreshold);
+				Blackboard->SetValueAsBool(TEXT("IsEnemyInRange"), bEnemyInRange);
+				Blackboard->SetValueAsBool(TEXT("IsUnsafeFromEnemy"), bUnsafeFromEnemy);
+				Blackboard->SetValueAsBool(TEXT("IsLowHealthAllyUnsafe"), bLowHealthAllyUnsafe);
+				Blackboard->SetValueAsBool(TEXT("IsTooFarFromFormation"),
+					FVector2D::DistSquared(CurrentPosition, ValidSlot) > FMath::Square(RejoinDistance)
+					|| SquadAgent.bUsingRelaxedSlot);
+				Blackboard->SetValueAsBool(TEXT("IsSlotBlocked"), SquadAgent.bUsingRelaxedSlot);
+				Blackboard->SetValueAsObject(TEXT("LowHealthAlly"), LowHealthAlly);
+				Blackboard->SetValueAsBool(TEXT("HasLowHealthAlly"), IsValid(LowHealthAlly));
+				SquadAgent.State = GetStateFromBlackboard(Blackboard);
+
+				if (!SquadAgents.IsEmpty() && IsValid(SquadAgents[0].Agent))
+				{
+					Blackboard->SetValueAsObject(TEXT("SquadLeader"), SquadAgents[0].Agent);
+				}
 			}
 		}
 
@@ -304,6 +702,71 @@ void ALevel_SquadCoordination::UpdateSquadTargets()
 		ArriveBehaviors[AgentIndex]->SetTarget(FormationTarget);
 		SquadAgent.Agent->SetDebugRenderingEnabled(bDrawDebug);
 	}
+
+	UpdateResearchMetrics(AssignedSlots);
+}
+
+void ALevel_SquadCoordination::UpdateResearchMetrics(const TArray<FVector2D>& AssignedSlots)
+{
+	ResearchMetrics = FSquadResearchMetrics{};
+
+	const int32 AgentCount = FMath::Min(SquadAgents.Num(), AssignedSlots.Num());
+	if (AgentCount <= 0)
+	{
+		return;
+	}
+
+	float TotalSlotError = 0.f;
+	float TotalSpacingError = 0.f;
+	int32 SpacingPairCount = 0;
+
+	for (int32 AgentIndex = 0; AgentIndex < AgentCount; ++AgentIndex)
+	{
+		const FSquadAgent& SquadAgent = SquadAgents[AgentIndex];
+		if (!IsValid(SquadAgent.Agent))
+		{
+			continue;
+		}
+
+		const float SlotError = FVector2D::Distance(SquadAgent.Agent->GetPosition(), AssignedSlots[AgentIndex]);
+		TotalSlotError += SlotError;
+		ResearchMetrics.MaxSlotError = FMath::Max(ResearchMetrics.MaxSlotError, SlotError);
+
+		if (SquadAgent.StuckTimer >= StuckTimeThreshold)
+		{
+			++ResearchMetrics.StuckAgentCount;
+		}
+		if (SquadAgent.bUsingRelaxedSlot)
+		{
+			++ResearchMetrics.RelaxedSlotCount;
+		}
+
+		for (int32 OtherAgentIndex = AgentIndex + 1; OtherAgentIndex < AgentCount; ++OtherAgentIndex)
+		{
+			const FSquadAgent& OtherSquadAgent = SquadAgents[OtherAgentIndex];
+			if (!IsValid(OtherSquadAgent.Agent))
+			{
+				continue;
+			}
+
+			const float CurrentDistance = FVector2D::Distance(SquadAgent.Agent->GetPosition(), OtherSquadAgent.Agent->GetPosition());
+			const float DesiredDistance = FVector2D::Distance(AssignedSlots[AgentIndex], AssignedSlots[OtherAgentIndex]);
+			TotalSpacingError += FMath::Abs(CurrentDistance - DesiredDistance);
+			++SpacingPairCount;
+		}
+	}
+
+	ResearchMetrics.AverageSlotError = TotalSlotError / static_cast<float>(AgentCount);
+	ResearchMetrics.AverageSpacingError = SpacingPairCount > 0
+		? TotalSpacingError / static_cast<float>(SpacingPairCount)
+		: 0.f;
+	ResearchMetrics.bFormationSettled = ResearchMetrics.MaxSlotError <= SettledSlotError;
+	if (ResearchMetrics.bFormationSettled && !bHasSettledForTarget)
+	{
+		LastSettleTime = TimeSinceTargetSet;
+		bHasSettledForTarget = true;
+	}
+	ResearchMetrics.TimeToSettle = bHasSettledForTarget ? LastSettleTime : 0.f;
 }
 
 void ALevel_SquadCoordination::DrawSquadDebug() const
@@ -322,13 +785,52 @@ void ALevel_SquadCoordination::DrawSquadDebug() const
 		}
 
 		// Green points/lines show the current slot handed to Unreal's path follower.
-		const FVector2D Slot2D = MouseTarget.Position + GetFormationOffset(AgentIndex);
+		const FVector2D Slot2D = SquadAgents[AgentIndex].AssignedSlot;
 		FVector2D DebugTarget = Slot2D;
-		TryGetValidNavSlot(Slot2D, DebugTarget);
 
 		const FVector SlotLocation{DebugTarget.X, DebugTarget.Y, DrawZ};
-		DrawDebugPoint(GetWorld(), SlotLocation, 14.f, FColor::Green, false, -1.f, 0);
-		DrawDebugLine(GetWorld(), Agent->GetActorLocation(), SlotLocation, FColor::Green, false, -1.f, 0, 2.f);
+		const FColor SlotColor = SquadAgents[AgentIndex].bUsingRelaxedSlot ? FColor::Orange : FColor::Green;
+		DrawDebugPoint(GetWorld(), SlotLocation, 14.f, SlotColor, false, -1.f, 0);
+		DrawDebugLine(GetWorld(), Agent->GetActorLocation(), SlotLocation, SlotColor, false, -1.f, 0, 2.f);
+
+		const FSquadAgent& SquadAgent = SquadAgents[AgentIndex];
+		const bool bIsLowHealth = SquadAgent.Health <= SquadAgent.LowHealthThreshold;
+		const FColor HealthColor = bIsLowHealth ? FColor::Red : FColor::Green;
+		const FVector AgentDebugLocation = Agent->GetActorLocation() + FVector{0.f, 0.f, 130.f};
+		const FString DebugLabel = FString::Printf(
+			TEXT("Agent %d | %s\nHP %.0f/%.0f | %s"),
+			AgentIndex + 1,
+			ANSI_TO_TCHAR(GetStateLabel(SquadAgent.State)),
+			SquadAgent.Health,
+			SquadAgent.LowHealthThreshold,
+			bIsLowHealth ? TEXT("LOW HEALTH") : TEXT("Healthy"));
+
+		DrawDebugSphere(GetWorld(), Agent->GetActorLocation() + FVector{0.f, 0.f, 55.f}, 42.f, 12, HealthColor, false, -1.f, 0, 3.f);
+		DrawDebugString(GetWorld(), AgentDebugLocation, DebugLabel, nullptr, HealthColor, 0.f, true, 1.1f);
+	}
+
+	if (IsValid(PatrolEnemy))
+	{
+		for (int32 PointIndex = 0; PointIndex < PatrolEnemyPoints.Num(); ++PointIndex)
+		{
+			const FVector& PatrolPoint = PatrolEnemyPoints[PointIndex];
+			const bool bCurrentPoint = PointIndex == PatrolEnemyPointIndex;
+			const FColor PointColor = bCurrentPoint ? FColor::Yellow : FColor::Blue;
+			DrawDebugSphere(GetWorld(), PatrolPoint + FVector{0.f, 0.f, 20.f}, bCurrentPoint ? 55.f : 35.f, 12, PointColor, false, -1.f, 0, 3.f);
+
+			if (PatrolEnemyPoints.IsValidIndex(PointIndex + 1))
+			{
+				DrawDebugLine(GetWorld(), PatrolPoint, PatrolEnemyPoints[PointIndex + 1], FColor::Blue, false, -1.f, 0, 2.f);
+			}
+			else if (PatrolEnemyPoints.Num() > 1)
+			{
+				DrawDebugLine(GetWorld(), PatrolPoint, PatrolEnemyPoints[0], FColor::Blue, false, -1.f, 0, 2.f);
+			}
+		}
+
+		const FVector PatrolDebugLocation = PatrolEnemy->GetActorLocation() + FVector{0.f, 0.f, 130.f};
+		DrawDebugSphere(GetWorld(), PatrolEnemy->GetActorLocation() + FVector{0.f, 0.f, 55.f}, 42.f, 12, FColor::Blue, false, -1.f, 0, 3.f);
+		DrawDebugString(GetWorld(), PatrolDebugLocation, TEXT("Patrol Enemy\nState: Patrol"), nullptr, FColor::Blue, 0.f, true, 1.1f);
 	}
 }
 
@@ -362,6 +864,37 @@ void ALevel_SquadCoordination::UpdateImGui()
 	ImGui::Text("Squad Coordination");
 	ImGui::Indent();
 	ImGui::Text("Agents: %d", SquadAgents.Num());
+	ImGui::Text("Mode: %s", GetCoordinationModeLabel(CoordinationMode));
+	const char* ModeLabels[] = {"Role-based formation", "Shared target baseline"};
+	int CurrentMode = static_cast<int>(CoordinationMode);
+	if (ImGui::Combo("Research mode", &CurrentMode, ModeLabels, IM_ARRAYSIZE(ModeLabels)))
+	{
+		CoordinationMode = static_cast<ESquadCoordinationMode>(CurrentMode);
+		TimeSinceTargetSet = 0.f;
+		LastSettleTime = 0.f;
+		bHasSettledForTarget = false;
+		ResearchMetrics.bFormationSettled = false;
+		for (FSquadAgent& SquadAgent : SquadAgents)
+		{
+			SquadAgent.StuckTimer = 0.f;
+			SquadAgent.bUsingRelaxedSlot = false;
+			if (IsValid(SquadAgent.Agent))
+			{
+				SquadAgent.LastPosition = SquadAgent.Agent->GetPosition();
+			}
+		}
+	}
+	ImGui::Text("Average slot error: %.1f", ResearchMetrics.AverageSlotError);
+	ImGui::Text("Max slot error: %.1f", ResearchMetrics.MaxSlotError);
+	ImGui::Text("Average spacing error: %.1f", ResearchMetrics.AverageSpacingError);
+	ImGui::Text("Stuck agents: %d | Relaxed slots: %d", ResearchMetrics.StuckAgentCount, ResearchMetrics.RelaxedSlotCount);
+	ImGui::Text("Settled: %s | Time since target: %.2fs | Settle time: %.2fs",
+		ResearchMetrics.bFormationSettled ? "yes" : "no",
+		TimeSinceTargetSet,
+		ResearchMetrics.TimeToSettle);
+	ImGui::SliderFloat("Settled slot error", &SettledSlotError, 25.f, 300.f, "%.1f");
+	ImGui::SliderFloat("Stuck progress distance", &StuckProgressDistance, 1.f, 80.f, "%.1f");
+	ImGui::SliderFloat("Stuck time threshold", &StuckTimeThreshold, 0.25f, 5.f, "%.2f");
 	const char* RoleLabels[] = {"Leader", "Left Flank", "Right Flank", "Rear Support"};
 	int NewAgentRoleIndex = static_cast<int>(NewAgentRole);
 	if (ImGui::Combo("New agent role", &NewAgentRoleIndex, RoleLabels, IM_ARRAYSIZE(RoleLabels)))
@@ -403,34 +936,103 @@ void ALevel_SquadCoordination::UpdateImGui()
 				SquadAgent.Agent->SetDebugRenderingEnabled(bDrawDebug);
 			}
 		}
+		if (IsValid(PatrolEnemy))
+		{
+			PatrolEnemy->SetDebugRenderingEnabled(bDrawDebug);
+		}
 	}
 	ImGui::SliderFloat("Formation spacing", &FormationSpacing, 100.f, 700.f, "%.1f");
 	ImGui::SliderFloat("Avoidance radius", &AgentAvoidanceRadius, 0.f, 900.f, "%.1f");
 	ImGui::SliderFloat("Arrive stop radius", &ArriveStopRadius, 0.f, 150.f, "%.1f");
+	ImGui::SliderFloat("Rejoin distance", &RejoinDistance, 100.f, 1200.f, "%.1f");
+	ImGui::SliderFloat("Support ally distance", &SupportAllyDistance, 100.f, 700.f, "%.1f");
+	ImGui::SliderFloat("Low health fallback distance", &LowHealthFallbackDistance, 150.f, 1200.f, "%.1f");
+	ImGui::SliderFloat("Enemy range for support", &SupportEnemyDetectionRange, 100.f, 2000.f, "%.1f");
+	ImGui::SliderFloat("Wounded safe distance", &WoundedSafeDistanceFromEnemy, 100.f, 2000.f, "%.1f");
+	float PatrolRouteOffsetValues[2] = {
+		static_cast<float>(PatrolRouteOffset.X),
+		static_cast<float>(PatrolRouteOffset.Y)
+	};
+	if (ImGui::SliderFloat2("Patrol route offset", PatrolRouteOffsetValues, -1200.f, 1200.f, "%.1f"))
+	{
+		PatrolRouteOffset.X = PatrolRouteOffsetValues[0];
+		PatrolRouteOffset.Y = PatrolRouteOffsetValues[1];
+
+		if (IsValid(PatrolEnemy))
+		{
+			PatrolEnemy->SetActorLocation(FVector{
+				MouseTarget.Position.X + 900.f + PatrolRouteOffset.X,
+				MouseTarget.Position.Y + 900.f + PatrolRouteOffset.Y,
+				SpawnZ
+			});
+			RebuildPatrolRoute();
+		}
+	}
 
 	const char* FormationLabels[] = {"Wedge", "Column", "Line"};
 	int CurrentFormation = static_cast<int>(SquadFormation);
 	if (ImGui::Combo("Formation", &CurrentFormation, FormationLabels, IM_ARRAYSIZE(FormationLabels)))
 	{
 		SquadFormation = static_cast<ESquadFormation>(CurrentFormation);
+		TimeSinceTargetSet = 0.f;
+		LastSettleTime = 0.f;
+		bHasSettledForTarget = false;
 	}
 
 	for (int32 AgentIndex = 0; AgentIndex < SquadAgents.Num(); ++AgentIndex)
 	{
 		FSquadAgent& SquadAgent = SquadAgents[AgentIndex];
 		ImGui::PushID(AgentIndex);
+		ImGui::Separator();
+		const bool bIsLowHealth = SquadAgent.Health <= SquadAgent.LowHealthThreshold;
+		ImGui::Text("Agent %d", AgentIndex + 1);
+		ImGui::SameLine();
+		ImGui::TextColored(
+			bIsLowHealth ? ImVec4{1.f, 0.2f, 0.2f, 1.f} : ImVec4{0.2f, 1.f, 0.35f, 1.f},
+			bIsLowHealth ? "LOW HEALTH" : "Healthy");
+		ImGui::Text("Current state: %s", GetStateLabel(SquadAgent.State));
+
 		int CurrentRole = static_cast<int>(SquadAgent.Role);
 		if (ImGui::Combo("Role", &CurrentRole, RoleLabels, IM_ARRAYSIZE(RoleLabels)))
 		{
 			SquadAgent.Role = static_cast<ESquadRoles>(CurrentRole);
 		}
-		ImGui::SameLine();
-		ImGui::Text("Agent %d", AgentIndex + 1);
+		ImGui::SliderFloat("Health", &SquadAgent.Health, 0.f, 100.f, "%.1f");
+		ImGui::SliderFloat("Low health threshold", &SquadAgent.LowHealthThreshold, 0.f, 100.f, "%.1f");
 		ImGui::PopID();
+	}
+
+	if (IsValid(PatrolEnemy))
+	{
+		AAIController* PatrolController = Cast<AAIController>(PatrolEnemy->GetController());
+		UBlackboardComponent* PatrolBlackboard = PatrolController
+			? PatrolController->GetBlackboardComponent()
+			: nullptr;
+		ImGui::Text("Patrol enemy state: %s", GetStateLabel(GetStateFromBlackboard(PatrolBlackboard)));
+		ImGui::Text("Patrol points: %d | Current: %d", PatrolEnemyPoints.Num(), PatrolEnemyPointIndex + 1);
 	}
 	ImGui::Unindent();
 
 	ImGui::End();
+}
+
+const char* ALevel_SquadCoordination::GetStateLabel(ESquadAgentState State)
+{
+	switch (State)
+	{
+	case ESquadAgentState::FollowFormation:
+		return "Follow Formation";
+	case ESquadAgentState::RejoinSquad:
+		return "Rejoin Squad";
+	case ESquadAgentState::LowHealthFallback:
+		return "Low Health Fallback";
+	case ESquadAgentState::SupportLowHealthAlly:
+		return "Support Low Health Ally";
+	case ESquadAgentState::Patrol:
+		return "Patrol";
+	default:
+		return "Unknown";
+	}
 }
 
 ESquadRoles ALevel_SquadCoordination::GetRoleForAgentIndex(int32 AgentIndex) const
@@ -492,6 +1094,16 @@ FVector2D ALevel_SquadCoordination::GetFormationOffset(int32 AgentIndex) const
 	default:
 		return FVector2D::ZeroVector;
 	}
+}
+
+FVector2D ALevel_SquadCoordination::GetDesiredSlotForAgent(int32 AgentIndex) const
+{
+	if (CoordinationMode == ESquadCoordinationMode::SharedTargetBaseline)
+	{
+		return MouseTarget.Position;
+	}
+
+	return MouseTarget.Position + GetFormationOffset(AgentIndex);
 }
 
 FVector2D ALevel_SquadCoordination::RotateFormationOffset(const FVector2D& LocalOffset) const
