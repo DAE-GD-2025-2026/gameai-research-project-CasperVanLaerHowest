@@ -143,3 +143,22 @@ void ATwoDLSystem::DrawAxiom()
 			StateStack.Num());
 	}
 }
+
+void ATwoDLSystem::SetTurnAngle(float NewAngle)
+{
+	TurnAngle = FMath::Clamp(NewAngle, 0.0f, 360.0f);
+	RerunAllGen();
+}
+
+void ATwoDLSystem::SetSegmentLength(float NewLength)
+{
+	SegmentLength = FMath::Max(NewLength, 1.0f);
+	RerunAllGen();
+}
+
+void ATwoDLSystem::SetRedoCount(int32 NewCount)
+{
+	// Keep this limited: L-system size grows extremely quickly.
+	m_Redos = static_cast<uint8>(FMath::Clamp(NewCount, 1, 8));
+	RerunAllGen();
+}
