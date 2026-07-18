@@ -10,6 +10,39 @@
 
 class ACameraActor;
 
+UENUM(BlueprintType)
+enum class EThreeDLSystemPreset : uint8
+{
+	Tree UMETA(DisplayName = "Tree"),
+	Bush UMETA(DisplayName = "Bush"),
+	Coral UMETA(DisplayName = "Coral")
+};
+
+USTRUCT(BlueprintType)
+struct FRandomRewriteOption
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Random Rewrite")
+	FString Replacement;
+
+	// Relative probability. The options do not need to add up to 1.0.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Random Rewrite", meta = (ClampMin = "0.0"))
+	float Chance = 1.0f;
+};
+
+USTRUCT(BlueprintType)
+struct FRandomRewriteRule
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Random Rewrite")
+	FString Symbol;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Random Rewrite")
+	TArray<FRandomRewriteOption> Options;
+};
+
 UCLASS()
 class LSYSTEMS_API AThreeDLSystem : public AActor
 {
@@ -41,11 +74,20 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "L-System|Settings")
 	void SetRandomSeed(int32 NewSeed);
 
+	UFUNCTION(BlueprintCallable, Category = "L-System|Settings")
+	void SetAngleVariationPercent(float NewVariationPercent);
+
+	UFUNCTION(BlueprintCallable, Category = "L-System|Presets")
+	void ApplyPreset(EThreeDLSystemPreset NewPreset);
+
 	UFUNCTION(BlueprintCallable, Category = "L-System|Camera")
 	void SetCameraOrbitEnabled(bool bEnabled);
 
 	UFUNCTION(BlueprintCallable, Category = "L-System|Camera")
 	void SetCameraOrbitSpeed(float NewSpeed);
+
+	UFUNCTION(BlueprintCallable, Category = "L-System|Camera")
+	void SetCameraOrbitDistance(float NewDistance);
 
 	float GetTurnAngle() const { return TurnAngle; }
 	float GetSegmentLength() const { return SegmentLength; }
@@ -53,8 +95,11 @@ public:
 	float GetStartWidth() const { return StartWidth; }
 	float GetWidthMultiplier() const { return WidthMultiplier; }
 	int32 GetRandomSeed() const { return RandomSeed; }
+	float GetAngleVariationPercent() const { return AngleVariationPercent; }
+	EThreeDLSystemPreset GetCurrentPreset() const { return CurrentPreset; }
 	bool IsCameraOrbitEnabled() const { return bOrbitCamera; }
 	float GetCameraOrbitSpeed() const { return CameraOrbitSpeed; }
+	float GetCameraOrbitDistance() const { return CameraOrbitDistance; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -98,6 +143,15 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System|Random")
 	int32 RandomSeed = 12345;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System|Random", meta = (ClampMin = "0.0", ClampMax = "100.0", Units = "Percent"))
+	float AngleVariationPercent = 15.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System|Random")
+	TArray<FRandomRewriteRule> RandomRewriteRules;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "L-System|Presets")
+	EThreeDLSystemPreset CurrentPreset = EThreeDLSystemPreset::Tree;
+
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "L-System|Camera")
 	TObjectPtr<ACameraActor> OrbitCamera;
 
@@ -106,6 +160,10 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System|Camera", meta = (Units = "deg/s"))
 	float CameraOrbitSpeed = 20.0f;
+
+	// A value of 0 uses the placed camera's horizontal distance when play starts.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System|Camera", meta = (ClampMin = "0.0", Units = "cm", DisplayName = "Orbit Distance"))
+	float CameraOrbitDistance = 0.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System|Camera")
 	float CameraTargetHeight = 150.0f;
@@ -118,6 +176,8 @@ protected:
 
 private:
 	void InitializeCameraOrbit();
+	bool TryGetRandomReplacement(const FString& Symbol, FString& OutReplacement);
+	float GetRandomTurnAngle();
 
 	void AddBranchCylinder(
 		const FVector& Start,
@@ -135,6 +195,7 @@ private:
 	FString m_Axiom{TEXT("X")};
 
 	float CameraOrbitAngleRadians = 0.0f;
-	float CameraOrbitRadius = 1.0f;
 	float CameraOrbitHeight = 0.0f;
+	FRandomStream GenerationRandomStream;
+	FRandomStream AngleRandomStream;
 };

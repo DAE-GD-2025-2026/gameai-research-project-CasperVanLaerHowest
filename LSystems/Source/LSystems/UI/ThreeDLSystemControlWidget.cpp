@@ -19,8 +19,13 @@ void UThreeDLSystemControlWidget::NativeConstruct()
 	if (StartWidthSpinBox) StartWidthSpinBox->OnValueChanged.AddUniqueDynamic(this, &UThreeDLSystemControlWidget::HandleStartWidthChanged);
 	if (WidthMultiplierSpinBox) WidthMultiplierSpinBox->OnValueChanged.AddUniqueDynamic(this, &UThreeDLSystemControlWidget::HandleWidthMultiplierChanged);
 	if (RandomSeedSpinBox) RandomSeedSpinBox->OnValueChanged.AddUniqueDynamic(this, &UThreeDLSystemControlWidget::HandleRandomSeedChanged);
+	if (AngleVariationSpinBox) AngleVariationSpinBox->OnValueChanged.AddUniqueDynamic(this, &UThreeDLSystemControlWidget::HandleAngleVariationChanged);
 	if (OrbitCameraCheckBox) OrbitCameraCheckBox->OnCheckStateChanged.AddUniqueDynamic(this, &UThreeDLSystemControlWidget::HandleOrbitChanged);
 	if (OrbitSpeedSpinBox) OrbitSpeedSpinBox->OnValueChanged.AddUniqueDynamic(this, &UThreeDLSystemControlWidget::HandleOrbitSpeedChanged);
+	if (OrbitDistanceSpinBox) OrbitDistanceSpinBox->OnValueChanged.AddUniqueDynamic(this, &UThreeDLSystemControlWidget::HandleOrbitDistanceChanged);
+	if (TreePresetButton) TreePresetButton->OnClicked.AddUniqueDynamic(this, &UThreeDLSystemControlWidget::HandleTreePresetClicked);
+	if (BushPresetButton) BushPresetButton->OnClicked.AddUniqueDynamic(this, &UThreeDLSystemControlWidget::HandleBushPresetClicked);
+	if (CoralPresetButton) CoralPresetButton->OnClicked.AddUniqueDynamic(this, &UThreeDLSystemControlWidget::HandleCoralPresetClicked);
 	if (RegenerateButton) RegenerateButton->OnClicked.AddUniqueDynamic(this, &UThreeDLSystemControlWidget::HandleRegenerateClicked);
 }
 
@@ -49,8 +54,10 @@ void UThreeDLSystemControlWidget::SynchronizeValues()
 	if (StartWidthSpinBox) StartWidthSpinBox->SetValue(LSystem->GetStartWidth());
 	if (WidthMultiplierSpinBox) WidthMultiplierSpinBox->SetValue(LSystem->GetWidthMultiplier());
 	if (RandomSeedSpinBox) RandomSeedSpinBox->SetValue(LSystem->GetRandomSeed());
+	if (AngleVariationSpinBox) AngleVariationSpinBox->SetValue(LSystem->GetAngleVariationPercent());
 	if (OrbitCameraCheckBox) OrbitCameraCheckBox->SetIsChecked(LSystem->IsCameraOrbitEnabled());
 	if (OrbitSpeedSpinBox) OrbitSpeedSpinBox->SetValue(LSystem->GetCameraOrbitSpeed());
+	if (OrbitDistanceSpinBox) OrbitDistanceSpinBox->SetValue(LSystem->GetCameraOrbitDistance());
 	bSynchronizingValues = false;
 }
 
@@ -60,6 +67,11 @@ void UThreeDLSystemControlWidget::HandleSegmentLengthChanged(float Value) { if (
 void UThreeDLSystemControlWidget::HandleStartWidthChanged(float Value) { if (LSystem && !bSynchronizingValues) LSystem->SetStartWidth(Value); }
 void UThreeDLSystemControlWidget::HandleWidthMultiplierChanged(float Value) { if (LSystem && !bSynchronizingValues) LSystem->SetWidthMultiplier(Value); }
 void UThreeDLSystemControlWidget::HandleRandomSeedChanged(float Value) { if (LSystem && !bSynchronizingValues) LSystem->SetRandomSeed(FMath::RoundToInt(Value)); }
+void UThreeDLSystemControlWidget::HandleAngleVariationChanged(float Value) { if (LSystem && !bSynchronizingValues) LSystem->SetAngleVariationPercent(Value); }
 void UThreeDLSystemControlWidget::HandleOrbitChanged(bool bIsChecked) { if (LSystem && !bSynchronizingValues) LSystem->SetCameraOrbitEnabled(bIsChecked); }
 void UThreeDLSystemControlWidget::HandleOrbitSpeedChanged(float Value) { if (LSystem && !bSynchronizingValues) LSystem->SetCameraOrbitSpeed(Value); }
+void UThreeDLSystemControlWidget::HandleOrbitDistanceChanged(float Value) { if (LSystem && !bSynchronizingValues) LSystem->SetCameraOrbitDistance(Value); }
+void UThreeDLSystemControlWidget::HandleTreePresetClicked() { if (LSystem) { LSystem->ApplyPreset(EThreeDLSystemPreset::Tree); SynchronizeValues(); } }
+void UThreeDLSystemControlWidget::HandleBushPresetClicked() { if (LSystem) { LSystem->ApplyPreset(EThreeDLSystemPreset::Bush); SynchronizeValues(); } }
+void UThreeDLSystemControlWidget::HandleCoralPresetClicked() { if (LSystem) { LSystem->ApplyPreset(EThreeDLSystemPreset::Coral); SynchronizeValues(); } }
 void UThreeDLSystemControlWidget::HandleRegenerateClicked() { if (LSystem) LSystem->RerunAllGen(); }

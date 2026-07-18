@@ -31,8 +31,13 @@ private:
 	UFUNCTION() void HandleStartWidthChanged(float Value);
 	UFUNCTION() void HandleWidthMultiplierChanged(float Value);
 	UFUNCTION() void HandleRandomSeedChanged(float Value);
+	UFUNCTION() void HandleAngleVariationChanged(float Value);
 	UFUNCTION() void HandleOrbitChanged(bool bIsChecked);
 	UFUNCTION() void HandleOrbitSpeedChanged(float Value);
+	UFUNCTION() void HandleOrbitDistanceChanged(float Value);
+	UFUNCTION() void HandleTreePresetClicked();
+	UFUNCTION() void HandleBushPresetClicked();
+	UFUNCTION() void HandleCoralPresetClicked();
 	UFUNCTION() void HandleRegenerateClicked();
 
 	UPROPERTY(BlueprintReadOnly, Category = "L-System", meta = (AllowPrivateAccess = "true"))
@@ -44,8 +49,13 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<USpinBox> StartWidthSpinBox;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<USpinBox> WidthMultiplierSpinBox;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<USpinBox> RandomSeedSpinBox;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<USpinBox> AngleVariationSpinBox;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UCheckBox> OrbitCameraCheckBox;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<USpinBox> OrbitSpeedSpinBox;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<USpinBox> OrbitDistanceSpinBox;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> TreePresetButton;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> BushPresetButton;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> CoralPresetButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> RegenerateButton;
 
 	bool bSynchronizingValues = false;
