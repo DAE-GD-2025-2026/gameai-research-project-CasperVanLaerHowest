@@ -3,46 +3,61 @@
 #include "ThreeDLSystem.h"
 
 #include "Camera/CameraActor.h"
+#include "Components/InstancedStaticMeshComponent.h"
 #include "Kismet/GameplayStatics.h"
-#include "Kismet/KismetMathLibrary.h"
 #include "Math/RotationMatrix.h"
 
-// Sets default values
+#include <initializer_list>
+
+namespace
+{
+	constexpr int32 AngleRandomSeedSalt = 0x5F3759DF;
+
+	struct FWeightedReplacement
+	{
+		const TCHAR* Replacement;
+		float Chance;
+	};
+
+	void AddRandomRule(
+		TArray<FRandomRewriteRule>& Rules,
+		const TCHAR* Symbol,
+		std::initializer_list<FWeightedReplacement> Replacements)
+	{
+		FRandomRewriteRule Rule;
+		Rule.Symbol = Symbol;
+		Rule.Options.Reserve(static_cast<int32>(Replacements.size()));
+
+		for (const FWeightedReplacement& Replacement : Replacements)
+		{
+			FRandomRewriteOption Option;
+			Option.Replacement = Replacement.Replacement;
+			Option.Chance = Replacement.Chance;
+			Rule.Options.Add(MoveTemp(Option));
+		}
+
+		Rules.Add(MoveTemp(Rule));
+	}
+}
+
 AThreeDLSystem::AThreeDLSystem()
 {
 	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bStartWithTickEnabled = false;
 
 	BranchMesh = CreateDefaultSubobject<UProceduralMeshComponent>(TEXT("BranchMesh"));
 	SetRootComponent(BranchMesh);
 
+	LeafInstances = CreateDefaultSubobject<UInstancedStaticMeshComponent>(TEXT("LeafInstances"));
+	LeafInstances->SetupAttachment(BranchMesh);
+	LeafInstances->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	LeafInstances->SetCanEverAffectNavigation(false);
+
 	BranchMesh->bUseAsyncCooking = true;
 
-	RewriteRules.Add(TEXT("X"), TEXT("F[+!X][-!X][&!X][^!X]FX"));
-	RewriteRules.Add(TEXT("F"), TEXT("FF"));
-
-	FRandomRewriteRule RandomFRule;
-	RandomFRule.Symbol = TEXT("F");
-
-	FRandomRewriteOption StraightOption;
-	StraightOption.Replacement = TEXT("FF");
-	StraightOption.Chance = 0.40f;
-	RandomFRule.Options.Add(StraightOption);
-
-	FRandomRewriteOption YawBranchOption;
-	YawBranchOption.Replacement = TEXT("F[+F]F[-F]F");
-	YawBranchOption.Chance = 0.35f;
-	RandomFRule.Options.Add(YawBranchOption);
-
-	FRandomRewriteOption PitchBranchOption;
-	PitchBranchOption.Replacement = TEXT("F[&F]F[^F]F");
-	PitchBranchOption.Chance = 0.25f;
-	RandomFRule.Options.Add(PitchBranchOption);
-
-	RandomRewriteRules.Add(RandomFRule);
-
-	m_StartAxiom = m_Axiom;
+	ConfigurePreset(EThreeDLSystemPreset::Bush);
 	GenerationRandomStream.Initialize(RandomSeed);
-	AngleRandomStream.Initialize(RandomSeed ^ 0x5F3759DF);
+	AngleRandomStream.Initialize(RandomSeed ^ AngleRandomSeedSalt);
 }
 
 void AThreeDLSystem::BeginPlay()
@@ -56,7 +71,15 @@ void AThreeDLSystem::BeginPlay()
 	}
 
 	InitializeCameraOrbit();
-	RerunAllGen();
+	SetActorTickEnabled(bOrbitCamera && OrbitCamera != nullptr);
+	if (bApplyStartingPresetOnBeginPlay)
+	{
+		ApplyPreset(StartingPreset);
+	}
+	else
+	{
+		RerunAllGen();
+	}
 }
 
 void AThreeDLSystem::Tick(float DeltaTime)
@@ -69,6 +92,16 @@ void AThreeDLSystem::Tick(float DeltaTime)
 	}
 
 	CameraOrbitAngleRadians += FMath::DegreesToRadians(CameraOrbitSpeed) * DeltaTime;
+	UpdateOrbitCameraTransform();
+}
+
+void AThreeDLSystem::UpdateOrbitCameraTransform()
+{
+	if (!OrbitCamera)
+	{
+		return;
+	}
+
 	const FVector ActorLocation = GetActorLocation();
 	const FVector NewCameraLocation(
 		ActorLocation.X + FMath::Cos(CameraOrbitAngleRadians) * CameraOrbitDistance,
@@ -77,8 +110,7 @@ void AThreeDLSystem::Tick(float DeltaTime)
 	const FVector LookAtLocation = ActorLocation + FVector(0.0f, 0.0f, CameraTargetHeight);
 
 	OrbitCamera->SetActorLocation(NewCameraLocation);
-	OrbitCamera->SetActorRotation(
-		UKismetMathLibrary::FindLookAtRotation(NewCameraLocation, LookAtLocation));
+	OrbitCamera->SetActorRotation((LookAtLocation - NewCameraLocation).Rotation());
 }
 
 void AThreeDLSystem::InitializeCameraOrbit()
@@ -100,10 +132,11 @@ void AThreeDLSystem::InitializeCameraOrbit()
 void AThreeDLSystem::RunGeneration(FString& CurrentString)
 {
 	FString GeneratedString;
+	GeneratedString.Reserve(CurrentString.Len() * 2);
 
-	for (int32 i = 0; i < CurrentString.Len(); ++i)
+	for (const TCHAR Symbol : CurrentString)
 	{
-		const FString Letter = CurrentString.Mid(i, 1);
+		const FString Letter = FString::Chr(Symbol);
 		FString RandomReplacement;
 		if (TryGetRandomReplacement(Letter, RandomReplacement))
 		{
@@ -194,7 +227,13 @@ void AThreeDLSystem::RerunAllGen()
 void AThreeDLSystem::DrawAxiom()
 {
 	BranchMesh->ClearAllMeshSections();
-	AngleRandomStream.Initialize(RandomSeed ^ 0x5F3759DF);
+	LeafInstances->ClearInstances();
+	LeafInstances->SetStaticMesh(LeafMesh);
+	if (LeafMaterial)
+	{
+		LeafInstances->SetMaterial(0, LeafMaterial);
+	}
+	AngleRandomStream.Initialize(RandomSeed ^ AngleRandomSeedSalt);
 
 	TArray<FVector> Vertices;
 	TArray<int32> Triangles;
@@ -270,6 +309,17 @@ void AThreeDLSystem::DrawAxiom()
 
 		case TEXT('!'):
 			CurrentWidth = FMath::Max(CurrentWidth * WidthMultiplier, MinWidth);
+			break;
+
+		case TEXT('X'):
+			if (bGenerateLeaves && LeafMesh)
+			{
+				const FTransform LeafTransform(
+					Rotation + LeafRotationOffset,
+					Position,
+					FVector(FMath::Max(LeafScale, 0.01f)));
+				LeafInstances->AddInstance(LeafTransform, false);
+			}
 			break;
 
 		case TEXT('['):
@@ -370,74 +420,108 @@ void AThreeDLSystem::SetAngleVariationPercent(float NewVariationPercent)
 	RerunAllGen();
 }
 
+void AThreeDLSystem::SetLeavesEnabled(bool bEnabled)
+{
+	bGenerateLeaves = bEnabled;
+	RerunAllGen();
+}
+
+void AThreeDLSystem::SetLeafScale(float NewScale)
+{
+	LeafScale = FMath::Max(NewScale, 0.01f);
+	RerunAllGen();
+}
+
 void AThreeDLSystem::ApplyPreset(EThreeDLSystemPreset NewPreset)
+{
+	ConfigurePreset(NewPreset);
+	RerunAllGen();
+}
+
+void AThreeDLSystem::ConfigurePreset(EThreeDLSystemPreset NewPreset)
 {
 	CurrentPreset = NewPreset;
 	RewriteRules.Reset();
 	RandomRewriteRules.Reset();
 	m_StartAxiom = TEXT("X");
+	RewriteRules.Add(TEXT("F"), TEXT("FF"));
 
-	auto AddRandomFOption = [this](
-		FRandomRewriteRule& Rule,
-		const TCHAR* Replacement,
-		float Chance)
+	auto SetDrawingSettings = [this](
+		float NewSegmentLength,
+		float NewTurnAngle,
+		float NewStartWidth,
+		float NewWidthMultiplier,
+		float NewAngleVariation)
 	{
-		FRandomRewriteOption Option;
-		Option.Replacement = Replacement;
-		Option.Chance = Chance;
-		Rule.Options.Add(Option);
+		m_Redos = 3;
+		SegmentLength = NewSegmentLength;
+		TurnAngle = NewTurnAngle;
+		StartWidth = NewStartWidth;
+		WidthMultiplier = NewWidthMultiplier;
+		AngleVariationPercent = NewAngleVariation;
 	};
-
-	FRandomRewriteRule RandomFRule;
-	RandomFRule.Symbol = TEXT("F");
 
 	switch (NewPreset)
 	{
 	case EThreeDLSystemPreset::Tree:
+		bGenerateLeaves = true;
 		RewriteRules.Add(TEXT("X"), TEXT("F[+!X][-!X][&!X][^!X]FX"));
-		RewriteRules.Add(TEXT("F"), TEXT("FF"));
-		AddRandomFOption(RandomFRule, TEXT("FF"), 0.40f);
-		AddRandomFOption(RandomFRule, TEXT("F[+F]F[-F]F"), 0.35f);
-		AddRandomFOption(RandomFRule, TEXT("F[&F]F[^F]F"), 0.25f);
-		m_Redos = 3;
-		SegmentLength = 50.0f;
-		TurnAngle = 25.0f;
-		StartWidth = 10.0f;
-		WidthMultiplier = 0.75f;
-		AngleVariationPercent = 15.0f;
+		AddRandomRule(RandomRewriteRules, TEXT("F"), {
+			{TEXT("FF"), 0.30f},
+			{TEXT("F[+F]F[-F]F"), 0.20f},
+			{TEXT("F[&F]F[^F]F"), 0.20f},
+			{TEXT("F[+&F]F[-^F]F"), 0.15f},
+			{TEXT("F[+F][&F]F"), 0.15f}});
+		AddRandomRule(RandomRewriteRules, TEXT("X"), {
+			{TEXT("F[+!X][-!X][&!X][^!X]FX"), 0.45f},
+			{TEXT("F[+!X][-&!X]F[+^!X]X"), 0.30f},
+			{TEXT("F[+&!X][-&!X][+^!X][-^!X]FX"), 0.25f}});
+		SetDrawingSettings(50.0f, 25.0f, 10.0f, 0.75f, 15.0f);
 		break;
 
 	case EThreeDLSystemPreset::Bush:
+		bGenerateLeaves = true;
 		RewriteRules.Add(TEXT("X"), TEXT("F[+X][-X][&X][^X][+&X][-^X]"));
-		RewriteRules.Add(TEXT("F"), TEXT("FF"));
-		AddRandomFOption(RandomFRule, TEXT("FF"), 0.30f);
-		AddRandomFOption(RandomFRule, TEXT("F[+F][-F]"), 0.35f);
-		AddRandomFOption(RandomFRule, TEXT("F[&F][^F]"), 0.35f);
-		m_Redos = 3;
-		SegmentLength = 35.0f;
-		TurnAngle = 32.0f;
-		StartWidth = 12.0f;
-		WidthMultiplier = 0.70f;
-		AngleVariationPercent = 18.0f;
+		AddRandomRule(RandomRewriteRules, TEXT("F"), {
+			{TEXT("FF"), 0.20f},
+			{TEXT("F[+F][-F]"), 0.20f},
+			{TEXT("F[&F][^F]"), 0.20f},
+			{TEXT("F[+&F][-^F]"), 0.20f},
+			{TEXT("F[+F][-F][&F][^F]"), 0.20f}});
+		AddRandomRule(RandomRewriteRules, TEXT("X"), {
+			{TEXT("F[+X][-X][&X][^X][+&X][-^X]"), 0.40f},
+			{TEXT("F[+X][-X][+&X][-^X]FX"), 0.30f},
+			{TEXT("F[&X][^X][+X][-X]F[+&X]"), 0.30f}});
+		SetDrawingSettings(35.0f, 32.0f, 12.0f, 0.70f, 18.0f);
 		break;
 
 	case EThreeDLSystemPreset::Coral:
+		bGenerateLeaves = false;
 		RewriteRules.Add(TEXT("X"), TEXT("F[+&X][-&X][+^X][-^X][++X][--X]"));
-		RewriteRules.Add(TEXT("F"), TEXT("FF"));
-		AddRandomFOption(RandomFRule, TEXT("F"), 0.15f);
-		AddRandomFOption(RandomFRule, TEXT("FF"), 0.35f);
-		AddRandomFOption(RandomFRule, TEXT("F[+F][-F][&F][^F]"), 0.50f);
-		m_Redos = 3;
-		SegmentLength = 30.0f;
-		TurnAngle = 38.0f;
-		StartWidth = 14.0f;
-		WidthMultiplier = 0.82f;
-		AngleVariationPercent = 12.0f;
+		AddRandomRule(RandomRewriteRules, TEXT("F"), {
+			{TEXT("F"), 0.10f},
+			{TEXT("FF"), 0.20f},
+			{TEXT("F[+F][-F][&F][^F]"), 0.25f},
+			{TEXT("F[+&F][-&F][+^F][-^F]"), 0.25f},
+			{TEXT("F[++F][--F][&F][^F]"), 0.20f}});
+		AddRandomRule(RandomRewriteRules, TEXT("X"), {
+			{TEXT("F[+&X][-&X][+^X][-^X][++X][--X]"), 0.40f},
+			{TEXT("F[++X][--X][+&X][-^X]FX"), 0.30f},
+			{TEXT("F[+X][-X][&&X][^^X][+&X][-^X]"), 0.30f}});
+		SetDrawingSettings(30.0f, 38.0f, 14.0f, 0.82f, 12.0f);
 		break;
 	}
 
-	RandomRewriteRules.Add(RandomFRule);
-	RerunAllGen();
+	AddRandomRule(RandomRewriteRules, TEXT("+"), {
+		{TEXT("+"), 0.70f}, {TEXT("+&"), 0.15f}, {TEXT("+^"), 0.15f}});
+	AddRandomRule(RandomRewriteRules, TEXT("-"), {
+		{TEXT("-"), 0.70f}, {TEXT("-&"), 0.15f}, {TEXT("-^"), 0.15f}});
+	AddRandomRule(RandomRewriteRules, TEXT("&"), {
+		{TEXT("&"), 0.70f}, {TEXT("&+"), 0.15f}, {TEXT("&-"), 0.15f}});
+	AddRandomRule(RandomRewriteRules, TEXT("^"), {
+		{TEXT("^"), 0.70f}, {TEXT("^+"), 0.15f}, {TEXT("^-"), 0.15f}});
+	AddRandomRule(RandomRewriteRules, TEXT("!"), {
+		{TEXT("!"), 0.65f}, {TEXT("!!"), 0.25f}, {TEXT(""), 0.10f}});
 }
 
 float AThreeDLSystem::GetRandomTurnAngle()
@@ -454,6 +538,7 @@ void AThreeDLSystem::SetCameraOrbitEnabled(bool bEnabled)
 	}
 
 	bOrbitCamera = bEnabled;
+	SetActorTickEnabled(bOrbitCamera && OrbitCamera != nullptr);
 }
 
 void AThreeDLSystem::SetCameraOrbitSpeed(float NewSpeed)
@@ -472,23 +557,13 @@ void AThreeDLSystem::SetCameraOrbitDistance(float NewDistance)
 
 	const FVector ActorLocation = GetActorLocation();
 	const FVector CurrentOffset = OrbitCamera->GetActorLocation() - ActorLocation;
-	FVector2D HorizontalDirection(CurrentOffset.X, CurrentOffset.Y);
-	if (!HorizontalDirection.Normalize())
+	CameraOrbitHeight = CurrentOffset.Z;
+	if (!FVector2D(CurrentOffset.X, CurrentOffset.Y).IsNearlyZero())
 	{
-		HorizontalDirection = FVector2D(
-			FMath::Cos(CameraOrbitAngleRadians),
-			FMath::Sin(CameraOrbitAngleRadians));
+		CameraOrbitAngleRadians = FMath::Atan2(CurrentOffset.Y, CurrentOffset.X);
 	}
 
-	const FVector NewCameraLocation(
-		ActorLocation.X + HorizontalDirection.X * CameraOrbitDistance,
-		ActorLocation.Y + HorizontalDirection.Y * CameraOrbitDistance,
-		OrbitCamera->GetActorLocation().Z);
-	const FVector LookAtLocation = ActorLocation + FVector(0.0f, 0.0f, CameraTargetHeight);
-
-	OrbitCamera->SetActorLocation(NewCameraLocation);
-	OrbitCamera->SetActorRotation(
-		UKismetMathLibrary::FindLookAtRotation(NewCameraLocation, LookAtLocation));
+	UpdateOrbitCameraTransform();
 }
 
 void AThreeDLSystem::AddBranchCylinder(

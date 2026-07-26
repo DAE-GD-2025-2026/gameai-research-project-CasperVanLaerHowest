@@ -9,6 +9,8 @@
 #include "ThreeDLSystem.generated.h"
 
 class ACameraActor;
+class UInstancedStaticMeshComponent;
+class UStaticMesh;
 
 UENUM(BlueprintType)
 enum class EThreeDLSystemPreset : uint8
@@ -77,6 +79,12 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "L-System|Settings")
 	void SetAngleVariationPercent(float NewVariationPercent);
 
+	UFUNCTION(BlueprintCallable, Category = "L-System|Leaves")
+	void SetLeavesEnabled(bool bEnabled);
+
+	UFUNCTION(BlueprintCallable, Category = "L-System|Leaves")
+	void SetLeafScale(float NewScale);
+
 	UFUNCTION(BlueprintCallable, Category = "L-System|Presets")
 	void ApplyPreset(EThreeDLSystemPreset NewPreset);
 
@@ -96,6 +104,8 @@ public:
 	float GetWidthMultiplier() const { return WidthMultiplier; }
 	int32 GetRandomSeed() const { return RandomSeed; }
 	float GetAngleVariationPercent() const { return AngleVariationPercent; }
+	bool AreLeavesEnabled() const { return bGenerateLeaves; }
+	float GetLeafScale() const { return LeafScale; }
 	EThreeDLSystemPreset GetCurrentPreset() const { return CurrentPreset; }
 	bool IsCameraOrbitEnabled() const { return bOrbitCamera; }
 	float GetCameraOrbitSpeed() const { return CameraOrbitSpeed; }
@@ -106,6 +116,9 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "L-System")
 	TObjectPtr<UProceduralMeshComponent> BranchMesh;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "L-System|Leaves")
+	TObjectPtr<UInstancedStaticMeshComponent> LeafInstances;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System")
 	TMap<FString, FString> RewriteRules;
@@ -140,6 +153,21 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System|Drawing", meta = (DisplayName = "Branch Material"))
 	TObjectPtr<UMaterialInterface> BranchMaterial;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System|Leaves")
+	bool bGenerateLeaves = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System|Leaves")
+	TObjectPtr<UStaticMesh> LeafMesh;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System|Leaves")
+	TObjectPtr<UMaterialInterface> LeafMaterial;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System|Leaves", meta = (ClampMin = "0.01"))
+	float LeafScale = 0.25f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System|Leaves")
+	FRotator LeafRotationOffset = FRotator::ZeroRotator;
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System|Random")
 	int32 RandomSeed = 12345;
 
@@ -149,8 +177,14 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System|Random")
 	TArray<FRandomRewriteRule> RandomRewriteRules;
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System|Presets")
+	EThreeDLSystemPreset StartingPreset = EThreeDLSystemPreset::Bush;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "L-System|Presets")
+	bool bApplyStartingPresetOnBeginPlay = true;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "L-System|Presets")
-	EThreeDLSystemPreset CurrentPreset = EThreeDLSystemPreset::Tree;
+	EThreeDLSystemPreset CurrentPreset = EThreeDLSystemPreset::Bush;
 
 	UPROPERTY(EditInstanceOnly, BlueprintReadWrite, Category = "L-System|Camera")
 	TObjectPtr<ACameraActor> OrbitCamera;
@@ -176,6 +210,8 @@ protected:
 
 private:
 	void InitializeCameraOrbit();
+	void UpdateOrbitCameraTransform();
+	void ConfigurePreset(EThreeDLSystemPreset NewPreset);
 	bool TryGetRandomReplacement(const FString& Symbol, FString& OutReplacement);
 	float GetRandomTurnAngle();
 

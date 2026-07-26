@@ -32,6 +32,8 @@ private:
 	UFUNCTION() void HandleWidthMultiplierChanged(float Value);
 	UFUNCTION() void HandleRandomSeedChanged(float Value);
 	UFUNCTION() void HandleAngleVariationChanged(float Value);
+	UFUNCTION() void HandleLeavesChanged(bool bIsChecked);
+	UFUNCTION() void HandleLeafScaleChanged(float Value);
 	UFUNCTION() void HandleOrbitChanged(bool bIsChecked);
 	UFUNCTION() void HandleOrbitSpeedChanged(float Value);
 	UFUNCTION() void HandleOrbitDistanceChanged(float Value);
@@ -50,6 +52,8 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<USpinBox> WidthMultiplierSpinBox;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<USpinBox> RandomSeedSpinBox;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<USpinBox> AngleVariationSpinBox;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UCheckBox> LeavesCheckBox;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<USpinBox> LeafScaleSpinBox;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UCheckBox> OrbitCameraCheckBox;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<USpinBox> OrbitSpeedSpinBox;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<USpinBox> OrbitDistanceSpinBox;
