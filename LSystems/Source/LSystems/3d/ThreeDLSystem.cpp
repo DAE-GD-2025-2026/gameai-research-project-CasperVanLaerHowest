@@ -4,8 +4,10 @@
 
 #include "Camera/CameraActor.h"
 #include "Components/InstancedStaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "Kismet/GameplayStatics.h"
 #include "Math/RotationMatrix.h"
+#include "StaticMeshResources.h"
 
 #include <initializer_list>
 
@@ -222,6 +224,7 @@ void AThreeDLSystem::RerunAllGen()
 	}
 
 	DrawAxiom();
+	OnRegenerated.Broadcast();
 }
 
 void AThreeDLSystem::DrawAxiom()
@@ -354,6 +357,20 @@ void AThreeDLSystem::DrawAxiom()
 			StateStack.Num());
 	}
 
+	const int32 BranchTriangleCount = Triangles.Num() / 3;
+	int32 LeafTriangleCount = 0;
+	if (bGenerateLeaves && LeafMesh)
+	{
+		const FStaticMeshRenderData* LeafRenderData = LeafMesh->GetRenderData();
+		if (LeafRenderData && !LeafRenderData->LODResources.IsEmpty())
+		{
+			LeafTriangleCount =
+				LeafRenderData->LODResources[0].GetNumTriangles() *
+				LeafInstances->GetInstanceCount();
+		}
+	}
+	LastTriangleCount = BranchTriangleCount + LeafTriangleCount;
+
 	if (!Vertices.IsEmpty())
 	{
 		BranchMesh->CreateMeshSection_LinearColor(
@@ -373,9 +390,10 @@ void AThreeDLSystem::DrawAxiom()
 	}
 
 	UE_LOG(LogTemp, Log,
-		TEXT("3D L-System generated %d symbols and %d branch vertices."),
+		TEXT("3D L-System generated %d symbols, %d branch vertices and %d rendered triangles."),
 		m_Axiom.Len(),
-		Vertices.Num());
+		Vertices.Num(),
+		LastTriangleCount);
 }
 
 void AThreeDLSystem::SetTurnAngle(float NewAngle)

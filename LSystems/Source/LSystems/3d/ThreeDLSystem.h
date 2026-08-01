@@ -12,6 +12,8 @@ class ACameraActor;
 class UInstancedStaticMeshComponent;
 class UStaticMesh;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnThreeDLSystemRegenerated);
+
 UENUM(BlueprintType)
 enum class EThreeDLSystemPreset : uint8
 {
@@ -52,6 +54,9 @@ class LSYSTEMS_API AThreeDLSystem : public AActor
 
 public:
 	AThreeDLSystem();
+
+	UPROPERTY(BlueprintAssignable, Category = "L-System|Statistics")
+	FOnThreeDLSystemRegenerated OnRegenerated;
 
 	virtual void Tick(float DeltaTime) override;
 
@@ -110,6 +115,15 @@ public:
 	bool IsCameraOrbitEnabled() const { return bOrbitCamera; }
 	float GetCameraOrbitSpeed() const { return CameraOrbitSpeed; }
 	float GetCameraOrbitDistance() const { return CameraOrbitDistance; }
+
+	UFUNCTION(BlueprintPure, Category = "L-System|Statistics")
+	FString GetCurrentGrammar() const { return m_Axiom; }
+
+	UFUNCTION(BlueprintPure, Category = "L-System|Statistics")
+	int32 GetSymbolCount() const { return m_Axiom.Len(); }
+
+	UFUNCTION(BlueprintPure, Category = "L-System|Statistics")
+	int32 GetTriangleCount() const { return LastTriangleCount; }
 
 protected:
 	virtual void BeginPlay() override;
@@ -229,6 +243,9 @@ private:
 
 	UPROPERTY()
 	FString m_Axiom{TEXT("X")};
+
+	UPROPERTY(VisibleAnywhere, Category = "L-System|Statistics")
+	int32 LastTriangleCount = 0;
 
 	float CameraOrbitAngleRadians = 0.0f;
 	float CameraOrbitHeight = 0.0f;

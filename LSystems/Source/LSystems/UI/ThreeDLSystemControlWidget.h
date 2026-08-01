@@ -8,6 +8,7 @@ class AThreeDLSystem;
 class UButton;
 class UCheckBox;
 class USpinBox;
+class UTextBlock;
 
 UCLASS()
 class LSYSTEMS_API UThreeDLSystemControlWidget : public UUserWidget
@@ -20,10 +21,14 @@ public:
 
 protected:
 	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
 
 private:
 	void FindLSystemIfNeeded();
 	void SynchronizeValues();
+
+	UFUNCTION()
+	void SynchronizeStatistics();
 
 	UFUNCTION() void HandleAngleChanged(float Value);
 	UFUNCTION() void HandleGenerationChanged(float Value);
@@ -61,6 +66,9 @@ private:
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> BushPresetButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> CoralPresetButton;
 	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UButton> RegenerateButton;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> GrammarTextBlock;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> SymbolCountTextBlock;
+	UPROPERTY(meta = (BindWidgetOptional)) TObjectPtr<UTextBlock> TriangleCountTextBlock;
 
 	bool bSynchronizingValues = false;
 };

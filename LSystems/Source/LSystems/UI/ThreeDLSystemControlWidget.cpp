@@ -4,6 +4,7 @@
 #include "Components/Button.h"
 #include "Components/CheckBox.h"
 #include "Components/SpinBox.h"
+#include "Components/TextBlock.h"
 #include "Kismet/GameplayStatics.h"
 
 void UThreeDLSystemControlWidget::NativeConstruct()
@@ -11,6 +12,11 @@ void UThreeDLSystemControlWidget::NativeConstruct()
 	Super::NativeConstruct();
 
 	FindLSystemIfNeeded();
+	if (LSystem)
+	{
+		LSystem->OnRegenerated.AddUniqueDynamic(
+			this, &UThreeDLSystemControlWidget::SynchronizeStatistics);
+	}
 	SynchronizeValues();
 
 	if (AngleSpinBox) AngleSpinBox->OnValueChanged.AddUniqueDynamic(this, &UThreeDLSystemControlWidget::HandleAngleChanged);
@@ -31,9 +37,31 @@ void UThreeDLSystemControlWidget::NativeConstruct()
 	if (RegenerateButton) RegenerateButton->OnClicked.AddUniqueDynamic(this, &UThreeDLSystemControlWidget::HandleRegenerateClicked);
 }
 
+void UThreeDLSystemControlWidget::NativeDestruct()
+{
+	if (LSystem)
+	{
+		LSystem->OnRegenerated.RemoveDynamic(
+			this, &UThreeDLSystemControlWidget::SynchronizeStatistics);
+	}
+
+	Super::NativeDestruct();
+}
+
 void UThreeDLSystemControlWidget::SetLSystem(AThreeDLSystem* InLSystem)
 {
+	if (LSystem)
+	{
+		LSystem->OnRegenerated.RemoveDynamic(
+			this, &UThreeDLSystemControlWidget::SynchronizeStatistics);
+	}
+
 	LSystem = InLSystem;
+	if (LSystem)
+	{
+		LSystem->OnRegenerated.AddUniqueDynamic(
+			this, &UThreeDLSystemControlWidget::SynchronizeStatistics);
+	}
 	SynchronizeValues();
 }
 
@@ -62,22 +90,44 @@ void UThreeDLSystemControlWidget::SynchronizeValues()
 	if (OrbitCameraCheckBox) OrbitCameraCheckBox->SetIsChecked(LSystem->IsCameraOrbitEnabled());
 	if (OrbitSpeedSpinBox) OrbitSpeedSpinBox->SetValue(LSystem->GetCameraOrbitSpeed());
 	if (OrbitDistanceSpinBox) OrbitDistanceSpinBox->SetValue(LSystem->GetCameraOrbitDistance());
+	SynchronizeStatistics();
 	bSynchronizingValues = false;
 }
 
-void UThreeDLSystemControlWidget::HandleAngleChanged(float Value) { if (LSystem && !bSynchronizingValues) LSystem->SetTurnAngle(Value); }
-void UThreeDLSystemControlWidget::HandleGenerationChanged(float Value) { if (LSystem && !bSynchronizingValues) LSystem->SetRedoCount(FMath::RoundToInt(Value)); }
-void UThreeDLSystemControlWidget::HandleSegmentLengthChanged(float Value) { if (LSystem && !bSynchronizingValues) LSystem->SetSegmentLength(Value); }
-void UThreeDLSystemControlWidget::HandleStartWidthChanged(float Value) { if (LSystem && !bSynchronizingValues) LSystem->SetStartWidth(Value); }
-void UThreeDLSystemControlWidget::HandleWidthMultiplierChanged(float Value) { if (LSystem && !bSynchronizingValues) LSystem->SetWidthMultiplier(Value); }
-void UThreeDLSystemControlWidget::HandleRandomSeedChanged(float Value) { if (LSystem && !bSynchronizingValues) LSystem->SetRandomSeed(FMath::RoundToInt(Value)); }
-void UThreeDLSystemControlWidget::HandleAngleVariationChanged(float Value) { if (LSystem && !bSynchronizingValues) LSystem->SetAngleVariationPercent(Value); }
-void UThreeDLSystemControlWidget::HandleLeavesChanged(bool bIsChecked) { if (LSystem && !bSynchronizingValues) LSystem->SetLeavesEnabled(bIsChecked); }
-void UThreeDLSystemControlWidget::HandleLeafScaleChanged(float Value) { if (LSystem && !bSynchronizingValues) LSystem->SetLeafScale(Value); }
+void UThreeDLSystemControlWidget::SynchronizeStatistics()
+{
+	if (!LSystem)
+	{
+		return;
+	}
+
+	if (GrammarTextBlock)
+	{
+		GrammarTextBlock->SetText(FText::FromString(LSystem->GetCurrentGrammar()));
+	}
+	if (SymbolCountTextBlock)
+	{
+		SymbolCountTextBlock->SetText(FText::AsNumber(LSystem->GetSymbolCount()));
+	}
+	if (TriangleCountTextBlock)
+	{
+		TriangleCountTextBlock->SetText(FText::AsNumber(LSystem->GetTriangleCount()));
+	}
+}
+
+void UThreeDLSystemControlWidget::HandleAngleChanged(float Value) { if (LSystem && !bSynchronizingValues) { LSystem->SetTurnAngle(Value); SynchronizeStatistics(); } }
+void UThreeDLSystemControlWidget::HandleGenerationChanged(float Value) { if (LSystem && !bSynchronizingValues) { LSystem->SetRedoCount(FMath::RoundToInt(Value)); SynchronizeStatistics(); } }
+void UThreeDLSystemControlWidget::HandleSegmentLengthChanged(float Value) { if (LSystem && !bSynchronizingValues) { LSystem->SetSegmentLength(Value); SynchronizeStatistics(); } }
+void UThreeDLSystemControlWidget::HandleStartWidthChanged(float Value) { if (LSystem && !bSynchronizingValues) { LSystem->SetStartWidth(Value); SynchronizeStatistics(); } }
+void UThreeDLSystemControlWidget::HandleWidthMultiplierChanged(float Value) { if (LSystem && !bSynchronizingValues) { LSystem->SetWidthMultiplier(Value); SynchronizeStatistics(); } }
+void UThreeDLSystemControlWidget::HandleRandomSeedChanged(float Value) { if (LSystem && !bSynchronizingValues) { LSystem->SetRandomSeed(FMath::RoundToInt(Value)); SynchronizeStatistics(); } }
+void UThreeDLSystemControlWidget::HandleAngleVariationChanged(float Value) { if (LSystem && !bSynchronizingValues) { LSystem->SetAngleVariationPercent(Value); SynchronizeStatistics(); } }
+void UThreeDLSystemControlWidget::HandleLeavesChanged(bool bIsChecked) { if (LSystem && !bSynchronizingValues) { LSystem->SetLeavesEnabled(bIsChecked); SynchronizeStatistics(); } }
+void UThreeDLSystemControlWidget::HandleLeafScaleChanged(float Value) { if (LSystem && !bSynchronizingValues) { LSystem->SetLeafScale(Value); SynchronizeStatistics(); } }
 void UThreeDLSystemControlWidget::HandleOrbitChanged(bool bIsChecked) { if (LSystem && !bSynchronizingValues) LSystem->SetCameraOrbitEnabled(bIsChecked); }
 void UThreeDLSystemControlWidget::HandleOrbitSpeedChanged(float Value) { if (LSystem && !bSynchronizingValues) LSystem->SetCameraOrbitSpeed(Value); }
 void UThreeDLSystemControlWidget::HandleOrbitDistanceChanged(float Value) { if (LSystem && !bSynchronizingValues) LSystem->SetCameraOrbitDistance(Value); }
 void UThreeDLSystemControlWidget::HandleTreePresetClicked() { if (LSystem) { LSystem->ApplyPreset(EThreeDLSystemPreset::Tree); SynchronizeValues(); } }
 void UThreeDLSystemControlWidget::HandleBushPresetClicked() { if (LSystem) { LSystem->ApplyPreset(EThreeDLSystemPreset::Bush); SynchronizeValues(); } }
 void UThreeDLSystemControlWidget::HandleCoralPresetClicked() { if (LSystem) { LSystem->ApplyPreset(EThreeDLSystemPreset::Coral); SynchronizeValues(); } }
-void UThreeDLSystemControlWidget::HandleRegenerateClicked() { if (LSystem) LSystem->RerunAllGen(); }
+void UThreeDLSystemControlWidget::HandleRegenerateClicked() { if (LSystem) { LSystem->RerunAllGen(); SynchronizeStatistics(); } }
